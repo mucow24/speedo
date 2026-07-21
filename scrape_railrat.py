@@ -40,6 +40,12 @@ MAX_PLAUSIBLE_MPH = 170  # anything above this is a GPS glitch
 DATA = Path(__file__).parent / "data"
 OBS_FILE = DATA / "observations.jsonl"
 
+# RailRat's train pages sometimes self-declare a route slug that differs from
+# the one its route index uses (Keystone train pages link /routes/Keystone/,
+# which 404s; the route page lives at /routes/KeystoneService/). Canonicalize
+# to the route-index slug so the mismatch check doesn't reject real trains.
+ROUTE_ALIASES = {"Keystone": "KeystoneService"}
+
 # --- fetching ---------------------------------------------------------------
 
 _last_fetch = 0.0
@@ -125,6 +131,7 @@ def parse_train_page(text, now):
     if not m:
         return None
     route_slug, route_name, train = m.group(1), m.group(2).strip(), int(m.group(3))
+    route_slug = ROUTE_ALIASES.get(route_slug, route_slug)
 
     u = UPDATED_RE.search(text)
     if not u:
@@ -407,6 +414,7 @@ def main():
     if args.reparse:
         reparse_raw()
         return
+    args.route = ROUTE_ALIASES.get(args.route, args.route)
     seen = load_seen()
     print(f"{len(seen)} observations already on file")
 
