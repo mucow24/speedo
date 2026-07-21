@@ -421,10 +421,17 @@ function speedColor(v){
 }
 function binHtml(b){
   if (b.mx === undefined)
-    return `<b>Mile ${b.m.toFixed(1)}</b> of ${CFG.totalMiles}<br>no observations yet`;
-  return `<b>Mile ${b.m.toFixed(1)}</b> of ${CFG.totalMiles}<br>` +
-    `<span style="font-size:15px"><b>max ${b.mx} mph</b></span> - train ${b.top[0]}, ${b.top[1]}<br>` +
-    `${b.n} obs - median ${b.med} mph`;
+    return `<div class="pop">
+      <div class="pop-mph pop-nodata">&ndash;</div>
+      <div class="pop-label">no data</div>
+      <div class="pop-meta">mile ${b.m.toFixed(1)} of ${CFG.totalMiles}</div>
+    </div>`;
+  return `<div class="pop">
+    <div class="pop-mph" style="color:${speedColor(b.mx)}">${b.mx}</div>
+    <div class="pop-label">max mph</div>
+    <div class="pop-meta">#${b.top[0]}, ${b.top[1]}</div>
+    <div class="pop-meta">${b.n} pts, median ${b.med} mph</div>
+  </div>`;
 }
 function legendHtml(){
   const stops = CFG.anchors.map(([s,c]) => `${c} ${s/CFG.maxMph*100}%`).join(", ");
@@ -445,6 +452,29 @@ COMMON_CSS = r"""
   .lg-bar { height: 10px; border-radius: 5px; }
   .lg-ticks { display: flex; justify-content: space-between; color: #444; margin: 2px 0 4px; }
   .lg-sub { color: #666; }
+
+  /* speed popup: dark rounded card, big speed number in the segment's color */
+  .pop { text-align: center; font: 13px/1.35 system-ui, sans-serif; min-width: 132px; }
+  .pop-mph { font-size: 62px; font-weight: 800; line-height: 1; letter-spacing: -2px; }
+  .pop-nodata { color: #7a7f87; }
+  .pop-label { font-size: 20px; font-weight: 800; color: #fff; letter-spacing: 1px;
+               text-transform: uppercase; margin: 2px 0 9px; }
+  .pop-meta { font-size: 13px; color: #b9bdc4; margin-top: 3px; }
+
+  /* Leaflet popup chrome -> dark card */
+  .leaflet-popup-content-wrapper { background: #232323; color: #fff; border: 3px solid #fff;
+      border-radius: 22px; box-shadow: 0 3px 16px rgba(0,0,0,.45); padding: 4px; }
+  .leaflet-popup-content { margin: 14px 22px; }
+  .leaflet-popup-tip { background: #232323; box-shadow: none; }
+  .leaflet-container a.leaflet-popup-close-button { color: #9aa0a6; top: 6px; right: 8px; }
+  .leaflet-container a.leaflet-popup-close-button:hover { color: #fff; }
+
+  /* Google InfoWindow chrome -> dark card (best-effort; classes are Google's) */
+  .gm-style .gm-style-iw-c { background: #232323; border: 3px solid #fff; border-radius: 22px;
+      box-shadow: 0 3px 16px rgba(0,0,0,.45); padding: 0; }
+  .gm-style .gm-style-iw-d { overflow: hidden !important; padding: 14px 22px; }
+  .gm-style .gm-style-iw-t::after { background: #232323; box-shadow: none; }
+  .gm-style .gm-style-iw-c button.gm-ui-hover-effect > span { background: #9aa0a6; }
 """
 
 LEAFLET_TMPL = r"""<!DOCTYPE html>
