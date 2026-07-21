@@ -4,7 +4,9 @@
 Draws the official route line (USDOT/NTAD Amtrak Routes geometry), projects
 every GPS observation onto it, slices the line into half-mile bins, and colors
 each bin by the MAX speed ever observed there (so station dwell and delay
-slowdowns don't mask what the track can do). Output is self-contained HTML:
+slowdowns don't mask what the track can do). Routes with branches (the
+Regional's Virginia legs, the Empire Builder's Portland leg) are drawn as
+several sections with mile markers running continuously across them. Output is self-contained HTML:
 a Leaflet/OpenStreetMap version that works with zero setup, and a Google Maps
 version that activates when you supply an API key.
 
@@ -39,14 +41,32 @@ ROUTES = {
                           "mile0": (42.35194, -71.05528)},
     "PacificSurfliner": {"ntad": "Pacific Surfliner", "display": "Pacific Surfliner",
                          "mile0": (32.71653, -117.16999)},     # San Diego
-    "KeystoneService": {"ntad": "Keystone", "display": "Keystone Service",
+    "KeystoneService": {"ntad": "Keystone Service", "display": "Keystone Service",
                         "mile0": (40.34467, -76.41135)},       # Harrisburg-ish
+    "EthanAllenExpress": {"ntad": "Ethan Allen Express", "display": "Ethan Allen Express",
+                          "mile0": (40.75057, -73.99352)},     # NYC Penn
+    "EmpireService": {"ntad": "Empire Service", "display": "Empire Service",
+                      "mile0": (40.75057, -73.99352)},         # NYC Penn
+    "WolverineMichiganService": {"ntad": "Wolverine", "display": "Wolverine (Michigan Service)",
+                                 "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "Vermonter": {"ntad": "Vermonter", "display": "Vermonter",
+                  "mile0": (38.89722, -77.00639)},             # Washington Union
+    "AmtrakCascades": {"ntad": "Amtrak Cascades", "display": "Amtrak Cascades",
+                       "mile0": (49.27306, -123.09806)},       # Vancouver BC Pacific Central
+    "Downeaster": {"ntad": "Downeaster", "display": "Downeaster",
+                   "mile0": (42.36583, -71.06167)},            # Boston North
+    "EmpireBuilder": {"ntad": "Empire Builder", "display": "Empire Builder",
+                      "mile0": (41.87879, -87.63937)},         # Chicago Union
+    "SouthwestChief": {"ntad": "Southwest Chief", "display": "Southwest Chief",
+                       "mile0": (41.87879, -87.63937)},        # Chicago Union
 }
 
 BIN_MILES = 0.5
 OFFROUTE_MILES = 2.0     # drop observations farther than this from the line
 MAX_MPH = 160            # top of the color scale
 SIMPLIFY_MILES = 0.015   # ~25 m Douglas-Peucker tolerance
+MIN_SECTION_MILES = 5.0  # stitched leftovers shorter than this are scraps, not track
+DUP_TOL_MILES = 0.15     # a part everywhere this close to a longer one is a duplicate
 
 COLOR_ANCHORS = [(0, (220, 30, 30)), (40, (255, 140, 0)), (80, (255, 215, 0)),
                  (120, (40, 180, 70)), (160, (30, 60, 255))]
@@ -80,7 +100,9 @@ def fetch_route_geometry(route):
     gdir = DATA / "geometry"
     gdir.mkdir(parents=True, exist_ok=True)
     cache = gdir / f"{route}.geojson"
-    if not cache.exists():
+    if cache.exists():
+        gj = json.loads(cache.read_text(encoding="utf-8"))
+    else:
         params = urllib.parse.urlencode({
             "where": f"name='{cfg['ntad']}'", "outFields": "name",
             "returnGeometry": "true", "outSR": "4326",
@@ -90,8 +112,10 @@ def fetch_route_geometry(route):
         req = urllib.request.Request(f"{ARCGIS}?{params}",
                                      headers={"User-Agent": "speedo/0.1 hobby project"})
         with urllib.request.urlopen(req, timeout=60) as resp:
-            cache.write_bytes(resp.read())
-    gj = json.loads(cache.read_text(encoding="utf-8"))
+            body = resp.read()
+        gj = json.loads(body)
+        if gj.get("features"):
+            cache.write_bytes(body)  # don't cache an empty result (bad name)
     parts = []
     for feat in gj.get("features", []):
         geom = feat.get("geometry") or {}
@@ -104,40 +128,88 @@ def fetch_route_geometry(route):
         for line in coords:
             parts.append([(lat, lon) for lon, lat in line])
     if not parts:
-        raise SystemExit(f"NTAD returned no geometry for name='{cfg['ntad']}' "
-                         f"(check data/geometry/{route}.geojson)")
+        raise SystemExit(f"NTAD returned no geometry for name='{cfg['ntad']}'")
     return parts, cfg
 
 
-def stitch(parts, mile0):
-    """Join line parts into one chain by endpoint proximity; orient from mile0."""
-    parts = [p for p in parts if len(p) >= 2]
-    parts.sort(key=lambda p: -sum(dist_mi(a, b) for a, b in zip(p, p[1:])))
-    chain = list(parts.pop(0))
-    tol = 0.5  # miles between endpoints that count as "connected"
-    changed = True
-    while changed and parts:
-        changed = False
-        for i, p in enumerate(parts):
-            if dist_mi(chain[-1], p[0]) < tol:
-                chain += p[1:]
-            elif dist_mi(chain[-1], p[-1]) < tol:
-                chain += p[::-1][1:]
-            elif dist_mi(chain[0], p[-1]) < tol:
-                chain = p[:-1] + chain
-            elif dist_mi(chain[0], p[0]) < tol:
-                chain = p[::-1][:-1] + chain
-            else:
+def part_miles(part):
+    return sum(dist_mi(a, b) for a, b in zip(part, part[1:]))
+
+
+def dedupe_parts(parts):
+    """Drop parts that only re-trace a longer part.
+
+    NTAD features are littered with duplicate scraps (second track, twice-
+    digitized stubs) around junctions and stations; left in, they dead-end the
+    stitcher by doubling the chain back on itself.
+    """
+    parts = sorted(parts, key=part_miles, reverse=True)
+    pad = DUP_TOL_MILES / 30  # degrees; generous at any US latitude
+    kept, boxes = [], []
+    for p in parts:
+        lats, lons = [v[0] for v in p], [v[1] for v in p]
+        box = (min(lats), min(lons), max(lats), max(lons))
+        step = max(1, len(p) // 20)
+        probe = list(p[::step]) + [p[-1]]
+        dup = False
+        for q, qb in zip(kept, boxes):
+            if (box[0] < qb[0] - pad or box[1] < qb[1] - pad or
+                    box[2] > qb[2] + pad or box[3] > qb[3] + pad):
                 continue
-            parts.pop(i)
-            changed = True
-            break
-    if parts:
-        leftover = sum(dist_mi(a, b) for p in parts for a, b in zip(p, p[1:]))
-        print(f"  note: {len(parts)} unconnected part(s) dropped ({leftover:.1f} mi)")
-    if mile0 and dist_mi(chain[-1], mile0) < dist_mi(chain[0], mile0):
-        chain.reverse()
-    return chain
+            if all(any(project_to_segment(v, a, b)[0] <= DUP_TOL_MILES
+                       for a, b in zip(q, q[1:])) for v in probe):
+                dup = True
+                break
+        if not dup:
+            kept.append(p)
+            boxes.append(box)
+    return kept
+
+
+def stitch(parts, mile0):
+    """Join line parts into continuous chains; orient each from mile0.
+
+    Returns sections, longest first. A plain route is one chain; a branched
+    route (the Regional's Virginia legs, the Empire Builder's Portland leg)
+    yields one section per branch, because a branch meets the main line
+    mid-chain where endpoint-stitching can't absorb it.
+    """
+    parts = dedupe_parts([p for p in parts if len(p) >= 2])
+    tol = 0.5  # miles between endpoints that count as "connected"
+    sections, scrap_mi = [], 0.0
+    while parts:
+        chain = list(parts.pop(0))  # longest remaining; dedupe pre-sorted
+        changed = True
+        while changed and parts:
+            changed = False
+            for i, p in enumerate(parts):
+                if dist_mi(chain[-1], p[0]) < tol:
+                    chain += p[1:]
+                elif dist_mi(chain[-1], p[-1]) < tol:
+                    chain += p[::-1][1:]
+                elif dist_mi(chain[0], p[-1]) < tol:
+                    chain = p[:-1] + chain
+                elif dist_mi(chain[0], p[0]) < tol:
+                    chain = p[::-1][:-1] + chain
+                else:
+                    continue
+                parts.pop(i)
+                changed = True
+                break
+        if part_miles(chain) >= MIN_SECTION_MILES:
+            sections.append(chain)
+        else:
+            scrap_mi += part_miles(chain)
+    if scrap_mi:
+        print(f"  note: dropped {scrap_mi:.1f} mi of duplicate/stub scraps")
+    sections.sort(key=part_miles, reverse=True)
+    if mile0:
+        for c in sections:
+            if dist_mi(c[-1], mile0) < dist_mi(c[0], mile0):
+                c.reverse()
+    if len(sections) > 1:
+        print("  sections: " + ", ".join(f"{part_miles(c):.0f} mi" for c in sections))
+    return sections
 
 
 def simplify(pts, tol):
@@ -163,44 +235,56 @@ def simplify(pts, tol):
 
 # --- binning ----------------------------------------------------------------
 
-def build_bins(spine):
-    """Slice the spine into BIN_MILES arc-length bins of vertex runs."""
-    seglen = [dist_mi(a, b) for a, b in zip(spine, spine[1:])]
-    cum = [0.0]
-    for s in seglen:
-        cum.append(cum[-1] + s)
-    total = cum[-1]
+def build_bins(sections):
+    """Slice each section into BIN_MILES arc-length bins of vertex runs.
 
-    bins = []
-    cur = [spine[0]]
-    next_cut = BIN_MILES
-    for i, s in enumerate(seglen):
-        a, b = spine[i], spine[i + 1]
-        start = cum[i]
-        while next_cut < start + s - 1e-9:
-            t = (next_cut - start) / s
-            cutpt = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
-            cur.append(cutpt)
+    Mile numbering runs continuously across sections; bins never span a
+    section boundary. Returns the bins, each bin's start-mile label, a flat
+    segment list for projection -- (a, b, seg_mi, bin_base, mile_at_a,
+    last_bin_of_section) -- and total mileage.
+    """
+    bins, labels, segs = [], [], []
+    offset = 0.0
+    for spine in sections:
+        seglen = [dist_mi(a, b) for a, b in zip(spine, spine[1:])]
+        cum = [0.0]
+        for s in seglen:
+            cum.append(cum[-1] + s)
+        base = len(bins)
+        cur = [spine[0]]
+        next_cut = BIN_MILES
+        for i, s in enumerate(seglen):
+            a, b = spine[i], spine[i + 1]
+            start = cum[i]
+            while next_cut < start + s - 1e-9:
+                t = (next_cut - start) / s
+                cutpt = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+                cur.append(cutpt)
+                bins.append(cur)
+                cur = [cutpt]
+                next_cut += BIN_MILES
+            cur.append(b)
+        if len(cur) > 1:
             bins.append(cur)
-            cur = [cutpt]
-            next_cut += BIN_MILES
-        cur.append(b)
-    if len(cur) > 1:
-        bins.append(cur)
-    return bins, seglen, cum, total
+        labels += [offset + j * BIN_MILES for j in range(len(bins) - base)]
+        last = len(bins) - 1
+        for i in range(len(spine) - 1):
+            segs.append((spine[i], spine[i + 1], seglen[i], base, cum[i], last))
+        offset += cum[-1]
+    return bins, labels, segs, offset
 
 
 class SegmentIndex:
-    """Spatial hash of spine segments for fast nearest-segment lookup."""
+    """Spatial hash of route segments for fast nearest-segment lookup."""
 
     CELL = 0.05  # degrees
 
-    def __init__(self, spine, tol_mi):
-        self.spine = spine
+    def __init__(self, segs, tol_mi):
+        self.segs = segs
         self.grid = {}
         pad = tol_mi / MI_PER_DEG_LAT + self.CELL
-        for i in range(len(spine) - 1):
-            (la1, lo1), (la2, lo2) = spine[i], spine[i + 1]
+        for i, seg in enumerate(segs):
+            (la1, lo1), (la2, lo2) = seg[0], seg[1]
             for cy in range(int((min(la1, la2) - pad) / self.CELL),
                             int((max(la1, la2) + pad) / self.CELL) + 1):
                 for cx in range(int((min(lo1, lo2) - pad) / self.CELL),
@@ -211,7 +295,7 @@ class SegmentIndex:
         cell = (int(p[0] / self.CELL), int(p[1] / self.CELL))
         best = (float("inf"), None, 0.0)
         for i in self.grid.get(cell, ()):
-            d, t = project_to_segment(p, self.spine[i], self.spine[i + 1])
+            d, t = project_to_segment(p, self.segs[i][0], self.segs[i][1])
             if d < best[0]:
                 best = (d, i, t)
         return best
@@ -237,11 +321,13 @@ def short_ts(ts):
 
 def build(route, engines, google_key):
     parts, cfg = fetch_route_geometry(route)
-    chain = stitch(parts, cfg.get("mile0"))
-    spine = simplify(chain, SIMPLIFY_MILES)
-    bins_pts, seglen, cum, total = build_bins(spine)
-    print(f"Spine: {len(chain)} -> {len(spine)} vertices after simplify, "
-          f"{total:.1f} miles, {len(bins_pts)} bins of {BIN_MILES} mi")
+    sections = stitch(parts, cfg.get("mile0"))
+    raw_verts = sum(len(c) for c in sections)
+    sections = [simplify(c, SIMPLIFY_MILES) for c in sections]
+    bins_pts, bin_mile, segs, total = build_bins(sections)
+    print(f"Spine: {raw_verts} -> {sum(len(c) for c in sections)} vertices "
+          f"after simplify, {total:.1f} miles in {len(sections)} section(s), "
+          f"{len(bins_pts)} bins of {BIN_MILES} mi")
 
     obs = []
     with (DATA / "observations.jsonl").open(encoding="utf-8") as f:
@@ -252,16 +338,16 @@ def build(route, engines, google_key):
     if not obs:
         raise SystemExit(f"no observations for route {route} - run scrape_railrat.py first")
 
-    index = SegmentIndex(spine, OFFROUTE_MILES)
+    index = SegmentIndex(segs, OFFROUTE_MILES)
     binstats = [{"speeds": [], "max": -1, "top": None} for _ in bins_pts]
     used, offroute = 0, 0
     for o in obs:
-        d, seg, t = index.nearest((o["lat"], o["lon"]))
-        if seg is None or d > OFFROUTE_MILES:
+        d, si, t = index.nearest((o["lat"], o["lon"]))
+        if si is None or d > OFFROUTE_MILES:
             offroute += 1
             continue
-        mile = cum[seg] + t * seglen[seg]
-        b = min(int(mile / BIN_MILES), len(binstats) - 1)
+        _a, _b, seg_mi, bin_base, mile_at_a, last_bin = segs[si]
+        b = min(bin_base + int((mile_at_a + t * seg_mi) / BIN_MILES), last_bin)
         st = binstats[b]
         st["speeds"].append(o["mph"])
         if o["mph"] > st["max"]:
@@ -272,8 +358,8 @@ def build(route, engines, google_key):
           f"(>{OFFROUTE_MILES} mi from line)")
 
     bins_out = []
-    for i, (pts, st) in enumerate(zip(bins_pts, binstats)):
-        rec = {"m": round(i * BIN_MILES, 1),
+    for pts, mile, st in zip(bins_pts, bin_mile, binstats):
+        rec = {"m": round(mile, 1),
                "pts": [[round(la, 5), round(lo, 5)] for la, lo in pts]}
         if st["speeds"]:
             rec.update(mx=st["max"], n=len(st["speeds"]),
