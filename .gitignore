@@ -1,0 +1,5 @@
+# bulky raw page snapshots (observations.jsonl is the distilled dataset)
+data/raw/
+# generated maps; the google one may contain your Maps API key
+out/
+__pycache__/
