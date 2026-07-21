@@ -77,7 +77,10 @@ Notes:
   only.)
 - **Map**: `build_map.py` downloads the official route line (USDOT/BTS NTAD
   "Amtrak Routes" geometry), projects every observation onto it, slices the
-  line into 0.5-mile bins, and colors each bin by max observed mph — so station
+  line into 0.5-mile bins, and colors each bin by max observed mph. Branched
+  routes (the Regional's Virginia legs, the Empire Builder's Portland leg)
+  are drawn as several sections, with mile markers numbered continuously
+  across them — so station
   dwells and delay slowdowns don't hide what the track can do; they only show
   up where *every* train is slow (station throats, curves, speed-restricted
   territory). Points >2 mi off-route or >170 mph (GPS glitches) are dropped.
