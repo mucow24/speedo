@@ -13,7 +13,8 @@ Two stdlib-only Python scripts that map observed Amtrak speeds. Read
   tests (within the stated exclusions). Use TDD whenever possible. A red test
   must fail on the behavior being changed — "module failed to load" or "it
   didn't run" is not red. No tautological or purposeless tests; every test
-  carries a comment stating what it pins and why.
+  carries a comment stating what it pins and why. `pytest` and
+  `ruff check .` must pass before any commit is pushed.
 - **Right tool for the job.** Dependencies are welcome where they beat the
   stdlib option; prefer stdlib only when the choices are equally good. Tests
   run offline via `pytest`.

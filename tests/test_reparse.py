@@ -36,7 +36,7 @@ def test_reparse_anchors_dates_by_snapshot_provenance(tmp_path, monkeypatch):
 
     sr.reparse_raw()
 
-    recs = [json.loads(l) for l in
+    recs = [json.loads(line) for line in
             (tmp_path / "observations.jsonl").open(encoding="utf-8")]
     assert len(recs) == 2
     by_src = {r["src"]: r for r in recs}

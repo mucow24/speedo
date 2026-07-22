@@ -179,4 +179,6 @@ change and belongs in this file:
 ## Testing
 
 See [TESTING.md](TESTING.md). Tests live in `tests/`, run offline with
-`pytest`, and use fixture HTML/geometry under `tests/fixtures/`.
+`pytest`, and use fixture HTML/geometry under `tests/fixtures/`. CI
+(`.github/workflows/ci.yml`) runs the suite on Linux and Windows across the
+supported Python range, plus `ruff check`, on every push and PR.

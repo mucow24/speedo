@@ -12,8 +12,14 @@ timings and delays scraped from the same pages).
 
 ## Running it
 
-Requires Python 3.8+. The scripts themselves currently have no third-party
-dependencies; running the tests needs `pytest`.
+Requires Python 3.10+. The scripts themselves have no third-party
+dependencies. For development (tests, lint):
+
+```sh
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
 
 ```sh
 # 1. Scrape the latest runs (safe to repeat; only new points are added)

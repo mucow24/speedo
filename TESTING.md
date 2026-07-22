@@ -80,6 +80,9 @@ Every test must earn its place:
 - Tests run **offline and fast**. No network, ever. Real RailRat HTML
   snippets, NTAD geometry fragments, etc. live as fixtures under
   `tests/fixtures/`.
+- **CI enforces all of this**: GitHub Actions runs `pytest` (Linux +
+  Windows, oldest and newest supported Python) and `ruff check` on every
+  push and PR. Red CI means the change isn't done.
 - Restructuring the scripts for testability (extracting pure functions,
   keeping side effects behind `main()`) is encouraged — testability is a
   legitimate reason to refactor.

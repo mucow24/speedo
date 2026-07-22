@@ -62,6 +62,6 @@ def test_station_events_appended_and_deduped_on_content():
     assert sr.append_station_events(parsed([partial]), seen, "live", out) == 1
     assert sr.append_station_events(parsed([partial]), seen, "live", out) == 0
     assert sr.append_station_events(parsed([full]), seen, "live", out) == 1
-    recs = [json.loads(l) for l in out.getvalue().splitlines()]
+    recs = [json.loads(line) for line in out.getvalue().splitlines()]
     assert [r["dep"] for r in recs] == [None, "2026-07-21T08:14:00"]
     assert all(r["route"] == "AcelaExpress" and r["train"] == 2151 for r in recs)
