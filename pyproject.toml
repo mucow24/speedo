@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "mini-racer"]
 
 [tool.setuptools]
 py-modules = ["scrape_railrat", "build_map", "speedo_ctl"]

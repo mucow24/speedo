@@ -151,7 +151,16 @@ Pipeline per run, for one route:
   draw gray dashed; interpolated bins draw color-dashed and their popups say
   "interpolated". The legend hosts the toggles: hide outliers (default on),
   interpolate gaps (default on), and a max-gap slider (1–100 bins, active
-  only while interpolating).
+  only while interpolating). The legend's gradient bar doubles as a
+  **speed-range highlighter**: two draggable handles select an inclusive
+  [lo, hi] mph band (default full scale = inactive); segments, interpolated
+  bins, no-data bins, and raw-observation dots outside the band wash out,
+  restyled live during the drag. The wash pre-blends each color 85%
+  (`WASH_MIX`) toward the basemap tone (`WASH_BG`, declared per template —
+  dark for CARTO, light for Google) at full opacity, rather than dropping
+  alpha: translucent lines additively brighten where they overlap at high
+  zoom. All of this is display-time state in the shared front-end JS
+  (`COMMON_JS`) — nothing about the filter is baked into the build.
 
 ## speedo_ctl.py
 
@@ -252,6 +261,8 @@ change and belongs in this file:
 ## Testing
 
 See [TESTING.md](TESTING.md). Tests live in `tests/`, run offline with
-`pytest`, and use fixture HTML/geometry under `tests/fixtures/`. CI
+`pytest`, and use fixture HTML/geometry under `tests/fixtures/`. Shared
+front-end JS logic is tested by evaluating `COMMON_JS` under an embedded V8
+(`mini-racer`, a dev dependency). CI
 (`.github/workflows/ci.yml`) runs the suite on Linux and Windows across the
 supported Python range, plus `ruff check`, on every push and PR.

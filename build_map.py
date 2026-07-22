@@ -632,7 +632,37 @@ function speedColor(v){
 // Post-processing toggles. Outlier removal runs before interpolation: hiding
 // an outlier turns its bin into a gap, so the build ships two interpolation
 // variants ("ia" outliers-in, "ib" outliers-hidden where it differs).
-const S = {hideOut: true, interp: true, maxGap: 10};
+// lo/hi are the speed-range highlight bounds; at the full [0, maxMph] range
+// the filter is inactive and styling is untouched.
+const S = {hideOut: true, interp: true, maxGap: 10, lo: 0, hi: CFG.maxMph};
+
+// The wash: out-of-range segments pre-blend their speed color 85% toward the
+// basemap tone (WASH_BG, declared per template: dark CARTO tiles on Leaflet,
+// Google's light default) at full line opacity. Washing via low alpha instead
+// would additively brighten wherever washed lines overlap at high zoom (bin
+// joints, parallel track); opaque pre-blended color composites identically
+// everywhere.
+const WASH_MIX = 0.85;
+function parseColor(c){
+  if (c[0] === '#')
+    return [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)];
+  return c.match(/\d+/g).map(Number);
+}
+function washColor(c){
+  const a = parseColor(c), b = parseColor(WASH_BG);
+  const m = a.map((v,i) => Math.round(v + WASH_MIX*(b[i]-v)));
+  return `rgb(${m[0]},${m[1]},${m[2]})`;
+}
+function rangeActive(){ return S.lo > 0 || S.hi < CFG.maxMph; }
+function inSpeedRange(mph){ return mph >= S.lo && mph <= S.hi; }
+// One handle drag: clamp to the color scale, round to whole mph, and stop at
+// the other handle so the selection can collapse but never invert.
+function dragRange(which, mph, lo, hi, max){
+  mph = Math.round(Math.max(0, Math.min(max, mph)));
+  if (which === 'lo') lo = Math.min(mph, hi);
+  else hi = Math.max(mph, lo);
+  return [lo, hi];
+}
 
 function binState(b){
   const hidOut = b.out === 1 && S.hideOut;
@@ -644,11 +674,18 @@ function binState(b){
 }
 function binStyle(b){
   const st = binState(b);
+  let s;
   if (st.kind === 'data')
-    return {color: speedColor(st.mph), weight: 5, dash: null, opacity: .95};
-  if (st.kind === 'interp')
-    return {color: speedColor(st.mph), weight: 4, dash: '6 6', opacity: .85};
-  return {color: '#9aa0a6', weight: 3, dash: '3 7', opacity: .95};
+    s = {color: speedColor(st.mph), weight: 5, dash: null, opacity: .95};
+  else if (st.kind === 'interp')
+    s = {color: speedColor(st.mph), weight: 4, dash: '6 6', opacity: .85};
+  else
+    s = {color: '#9aa0a6', weight: 3, dash: '3 7', opacity: .95};
+  // No-data bins have no speed to be "in range", so an active filter always
+  // washes them -- only in-range track should stand out.
+  if (rangeActive() && (st.kind === 'none' || !inSpeedRange(st.mph)))
+    s.color = washColor(s.color);
+  return s;
 }
 function binHtml(b){
   const st = binState(b);
@@ -709,13 +746,70 @@ function wireControls(root, restyle){
   rng.addEventListener('input', () => setGap(rng.value));
   num.addEventListener('change', () => setGap(num.value));
   apply();
+  wireRange(root, restyle);
+}
+// Speed-range highlight: drag the two handles on the legend's gradient bar.
+// Restyles live on every pointer move; the shades preview the wash on the
+// bar itself.
+function wireRange(root, restyle){
+  const wrap = root.querySelector('#rng-wrap');
+  const handle = {lo: root.querySelector('#h-lo'), hi: root.querySelector('#h-hi')};
+  const shade = {lo: root.querySelector('#sh-lo'), hi: root.querySelector('#sh-hi')};
+  const row = root.querySelector('#rng-row'), label = root.querySelector('#rng-label');
+  const sync = () => {
+    const pct = v => v / CFG.maxMph * 100;
+    handle.lo.style.left = pct(S.lo) + '%';
+    handle.hi.style.left = pct(S.hi) + '%';
+    shade.lo.style.width = pct(S.lo) + '%';
+    shade.hi.style.left = pct(S.hi) + '%';
+    shade.hi.style.width = (100 - pct(S.hi)) + '%';
+    row.style.display = rangeActive() ? '' : 'none';
+    label.textContent = `${S.lo}–${S.hi}`;
+  };
+  const setRange = (lo, hi) => {
+    if (lo === S.lo && hi === S.hi) return;
+    S.lo = lo; S.hi = hi;
+    sync(); restyle();
+  };
+  for (const which of ['lo', 'hi']){
+    handle[which].addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      handle[which].setPointerCapture(ev.pointerId);
+      const rect = wrap.getBoundingClientRect();
+      const move = e => {
+        const mph = (e.clientX - rect.left) / rect.width * CFG.maxMph;
+        setRange(...dragRange(which, mph, S.lo, S.hi, CFG.maxMph));
+      };
+      const up = () => {
+        handle[which].removeEventListener('pointermove', move);
+        handle[which].removeEventListener('pointerup', up);
+        handle[which].removeEventListener('pointercancel', up);
+      };
+      handle[which].addEventListener('pointermove', move);
+      handle[which].addEventListener('pointerup', up);
+      handle[which].addEventListener('pointercancel', up);
+    });
+  }
+  root.querySelector('#rng-reset').addEventListener('click', ev => {
+    ev.preventDefault();
+    setRange(0, CFG.maxMph);
+  });
+  sync();
 }
 function legendHtml(){
   const stops = CFG.anchors.map(([s,c]) => `${c} ${s/CFG.maxMph*100}%`).join(", ");
   const ticks = CFG.anchors.map(([s]) => `<span>${s}</span>`).join("");
   return `<div class="lg-title">${CFG.display}</div>
-    <div class="lg-bar" style="background:linear-gradient(to right, ${stops})"></div>
+    <div class="lg-bar-wrap" id="rng-wrap">
+      <div class="lg-bar" style="background:linear-gradient(to right, ${stops})"></div>
+      <div class="lg-shade" id="sh-lo"></div>
+      <div class="lg-shade" id="sh-hi"></div>
+      <div class="lg-handle" id="h-lo" title="drag to highlight a speed range"></div>
+      <div class="lg-handle" id="h-hi" title="drag to highlight a speed range"></div>
+    </div>
     <div class="lg-ticks">${ticks}</div>
+    <div class="lg-range" id="rng-row">highlighting <span id="rng-label"></span> mph
+      &ndash; <a id="rng-reset" href="#">reset</a></div>
     <div class="lg-sub">max observed mph per half-mile bin - click the line</div>
     <div class="lg-sub">${CFG.stats.obs.toLocaleString()} obs / ${CFG.stats.runs} runs / ${CFG.stats.from} to ${CFG.stats.to}</div>`;
 }
@@ -727,6 +821,16 @@ COMMON_CSS = r"""
             box-shadow: 0 1px 6px rgba(0,0,0,.35); font: 12px/1.45 system-ui, sans-serif; }
   .lg-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
   .lg-bar { height: 10px; border-radius: 5px; }
+  .lg-bar-wrap { position: relative; }
+  .lg-shade { position: absolute; top: 0; height: 10px; background: rgba(255,255,255,.82);
+              pointer-events: none; }
+  #sh-lo { left: 0; border-radius: 5px 0 0 5px; }
+  #sh-hi { border-radius: 0 5px 5px 0; }
+  .lg-handle { position: absolute; top: -3px; width: 9px; height: 16px; border-radius: 4px;
+               background: #fff; border: 1px solid #777; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+               cursor: ew-resize; transform: translateX(-50%); touch-action: none; }
+  .lg-range { color: #444; margin: 0 0 2px; }
+  .lg-range a { color: #0668c2; text-decoration: none; }
   .lg-ticks { display: flex; justify-content: space-between; color: #444; margin: 2px 0 4px; }
   .lg-sub { color: #666; }
   .lg-controls { border-top: 1px solid #ddd; margin-top: 6px; padding-top: 6px; color: #444; }
@@ -778,6 +882,7 @@ LEAFLET_TMPL = r"""<!DOCTYPE html>
 <script>
 const CFG = __CONFIG__;
 document.title = CFG.title;
+const WASH_BG = '#151515';  // wash blend target: the CARTO Dark Matter tiles
 """ + COMMON_JS + r"""
 const map = L.map('map');
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -798,13 +903,22 @@ for (const b of CFG.bins){
   bounds.push(b.pts[0], b.pts[b.pts.length-1]);
 }
 map.fitBounds(bounds, {padding: [20, 20]});
-const restyle = () => binLines.forEach(([line, b]) => line.setStyle(toLeaflet(binStyle(b))));
 
-const dots = L.layerGroup(CFG.obsPts.map(([la, lo, mph, train, ts]) =>
-  L.circleMarker([la, lo], {radius: 3, weight: 1, color: '#fff',
-                            fillColor: speedColor(mph), fillOpacity: .9})
-   .bindTooltip(`${mph} mph - train ${train}, ${ts}`)));
+const dotItems = CFG.obsPts.map(([la, lo, mph, train, ts]) =>
+  [L.circleMarker([la, lo], {radius: 3, weight: 1, color: '#fff',
+                             fillColor: speedColor(mph), fillOpacity: .9})
+    .bindTooltip(`${mph} mph - train ${train}, ${ts}`), mph]);
+const dots = L.layerGroup(dotItems.map(([m]) => m));
 L.control.layers(null, {'Raw observations': dots}, {collapsed: false}).addTo(map);
+
+const restyle = () => {
+  binLines.forEach(([line, b]) => line.setStyle(toLeaflet(binStyle(b))));
+  dotItems.forEach(([m, mph]) => {
+    const on = !rangeActive() || inSpeedRange(mph);
+    m.setStyle({color: on ? '#fff' : washColor('#ffffff'),
+                fillColor: on ? speedColor(mph) : washColor(speedColor(mph))});
+  });
+};
 
 const legend = L.control({position: 'bottomleft'});
 legend.onAdd = () => {
@@ -837,6 +951,7 @@ GOOGLE_TMPL = r"""<!DOCTYPE html>
 <script>
 const CFG = __CONFIG__;
 document.title = CFG.title;
+const WASH_BG = '#e8e6e0';  // wash blend target: Google's light default basemap
 """ + COMMON_JS + r"""
 function initMap(){
   const map = new google.maps.Map(document.getElementById('map'),
@@ -868,22 +983,29 @@ function initMap(){
     path.forEach(p => bounds.extend(p));
   }
   map.fitBounds(bounds);
-  const restyle = () => binLines.forEach(([line, b]) => line.setOptions(toGoogle(binStyle(b))));
 
-  const dots = CFG.obsPts.map(([la, lo, mph, train, ts]) => {
+  const dotItems = CFG.obsPts.map(([la, lo, mph, train, ts]) => {
+    const dotIcon = washed => ({path: google.maps.SymbolPath.CIRCLE, scale: 3.5,
+        fillColor: washed ? washColor(speedColor(mph)) : speedColor(mph), fillOpacity: .9,
+        strokeColor: washed ? washColor('#ffffff') : '#fff', strokeWeight: 1});
     const m = new google.maps.Marker({
       position: {lat: la, lng: lo},
-      icon: {path: google.maps.SymbolPath.CIRCLE, scale: 3.5,
-             fillColor: speedColor(mph), fillOpacity: .9,
-             strokeColor: '#fff', strokeWeight: 1},
+      icon: dotIcon(false),
       title: `${mph} mph - train ${train}, ${ts}`,
     });
     m.addListener('click', e => {
       info.setContent(`<b>${mph} mph</b> - train ${train}, ${ts}`);
       info.setPosition(e.latLng); info.open(map);
     });
-    return m;
+    return [m, mph, dotIcon];
   });
+  const dots = dotItems.map(([m]) => m);
+
+  const restyle = () => {
+    binLines.forEach(([line, b]) => line.setOptions(toGoogle(binStyle(b))));
+    dotItems.forEach(([m, mph, dotIcon]) =>
+      m.setIcon(dotIcon(rangeActive() && !inSpeedRange(mph))));
+  };
 
   const wrap = document.createElement('div');
   wrap.className = 'legend';
