@@ -90,6 +90,9 @@ OFFROUTE_MILES = 2.0     # drop observations farther than this from the line
 MAX_MPH = 160            # top of the color scale
 MAX_PLAUSIBLE_MPH = 170  # above this is a GPS glitch; filtered here at build
                          # time -- ingest (scrape_railrat) stores everything
+MIN_PLAUSIBLE_MPH = 10   # below this is a stopped/stuck train (station dwell,
+                         # held signal), not a track speed limit; filtered here
+                         # at build time too. Overridable via --min-mph.
 SIMPLIFY_MILES = 0.015   # ~25 m Douglas-Peucker tolerance
 MIN_SECTION_MILES = 5.0  # stitched leftovers shorter than this are scraps, not track
 DUP_TOL_MILES = 0.15     # a part everywhere this close to a longer one is a duplicate
@@ -425,13 +428,17 @@ def speed_color(mph):
 
 # --- main build -------------------------------------------------------------
 
-def load_observations(path, route):
-    """Load one route's observations, dropping GPS-glitch speeds.
+def load_observations(path, route, min_mph=MIN_PLAUSIBLE_MPH):
+    """Load one route's observations, dropping implausible speeds.
 
-    Ingest is lossless, so the plausibility ceiling lives here: a wrong
-    threshold is a rebuild away from being fixed, not permanent data loss.
+    Ingest is lossless, so the plausibility band lives here: a GPS-glitch
+    ceiling (MAX_PLAUSIBLE_MPH) above and a stopped-train floor (`min_mph`)
+    below. A point slower than the floor is nearly always a train halted at a
+    station or held at a signal, not a legitimate speed restriction, so
+    counting it would paint fake slow track. Either threshold is a rebuild
+    away from being fixed, not permanent data loss.
     """
-    obs, glitches = [], 0
+    obs, glitches, slow = [], 0, 0
     with path.open(encoding="utf-8") as f:
         for line in f:
             o = json.loads(line)
@@ -440,9 +447,14 @@ def load_observations(path, route):
             if o["mph"] > MAX_PLAUSIBLE_MPH:
                 glitches += 1
                 continue
+            if o["mph"] < min_mph:
+                slow += 1
+                continue
             obs.append(o)
     if glitches:
         print(f"  ignored {glitches} glitch points (>{MAX_PLAUSIBLE_MPH} mph)")
+    if slow:
+        print(f"  ignored {slow} stopped-train points (<{min_mph} mph)")
     return obs
 
 
@@ -450,7 +462,7 @@ def short_ts(ts):
     return f"{ts[5:7]}/{ts[8:10]} {ts[11:16]}"
 
 
-def build(route, engines, google_key):
+def build(route, engines, google_key, min_mph=MIN_PLAUSIBLE_MPH):
     route = canonical_route(route)  # every entry point resolves to the one canonical slug
     parts, cfg = fetch_route_geometry(route)
     sections = stitch(parts, cfg.get("mile0"))
@@ -461,7 +473,7 @@ def build(route, engines, google_key):
           f"after simplify, {total:.1f} miles in {len(sections)} section(s), "
           f"{len(bins_pts)} bins of {BIN_MILES} mi")
 
-    obs = load_observations(DATA / "observations.jsonl", route)
+    obs = load_observations(DATA / "observations.jsonl", route, min_mph)
     if not obs:
         raise SystemExit(f"no observations for route {route} - run scrape_railrat.py first")
 
@@ -835,9 +847,13 @@ def main():
     ap.add_argument("--engine", default="both", choices=["both", "leaflet", "google"])
     ap.add_argument("--google-key", default="",
                     help="Google Maps JS API key to bake into the google output")
+    ap.add_argument("--min-mph", type=int, default=MIN_PLAUSIBLE_MPH,
+                    help="ignore observations slower than this -- stopped or "
+                         "stuck trains, not track speed limits "
+                         f"(default {MIN_PLAUSIBLE_MPH})")
     args = ap.parse_args()
     engines = ["leaflet", "google"] if args.engine == "both" else [args.engine]
-    build(args.route, engines, args.google_key)
+    build(args.route, engines, args.google_key, args.min_mph)
 
 
 if __name__ == "__main__":

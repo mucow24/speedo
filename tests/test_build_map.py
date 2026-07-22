@@ -52,3 +52,25 @@ def test_glitch_ceiling_is_inclusive(tmp_path):
                     rec(mph=bm.MAX_PLAUSIBLE_MPH + 1)])
     obs = bm.load_observations(f, "AcelaExpress")
     assert [o["mph"] for o in obs] == [bm.MAX_PLAUSIBLE_MPH]
+
+
+def test_load_drops_stopped_train_points_by_default(tmp_path):
+    # Purpose: points slower than the default floor -- a train halted at a
+    # station or stuck behind a signal, not a track speed restriction -- are
+    # dropped so they can't paint fake slow track, while the genuine speeds
+    # at the same spot survive. Pins the <10 mph default the map relies on.
+    f = tmp_path / "obs.jsonl"
+    write_jsonl(f, [rec(mph=0), rec(mph=9), rec(mph=45), rec(mph=125)])
+    obs = bm.load_observations(f, "AcelaExpress")
+    assert [o["mph"] for o in obs] == [45, 125]
+
+
+def test_min_mph_floor_is_inclusive_and_configurable(tmp_path):
+    # Purpose: pin the boundary and the knob -- exactly min_mph is kept, one
+    # below is dropped (mirroring the glitch ceiling's inclusive rule), and a
+    # caller-supplied floor (a rebuild at a different threshold) overrides the
+    # MIN_PLAUSIBLE_MPH default.
+    f = tmp_path / "obs.jsonl"
+    write_jsonl(f, [rec(mph=14), rec(mph=15), rec(mph=16)])
+    obs = bm.load_observations(f, "AcelaExpress", min_mph=15)
+    assert [o["mph"] for o in obs] == [15, 16]

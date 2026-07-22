@@ -112,7 +112,9 @@ Pipeline per run, for one route:
   span a section boundary.
 - **Projection** — `SegmentIndex`, a spatial hash over route segments
   (0.05° cells), assigns each observation to its nearest segment and thus its
-  bin. `load_observations` drops GPS-glitch speeds (>170 mph) at load, and
+  bin. `load_observations` drops out-of-band speeds at load — GPS glitches
+  (>170 mph) above and stopped/stuck trains (<10 mph, `--min-mph`) below, the
+  latter being station dwells and held signals rather than track limits — and
   observations >2 mi off-route are dropped (wrong route/GPS junk).
 - **Stats** — each bin records max mph (which train/when set it), point
   count, and median. **Max**, not mean, is the headline: station dwells and
@@ -190,10 +192,11 @@ change and belongs in this file:
   list intentional — every entry should pull real weight.
 - **The JSONL datasets are the source of truth, and ingest is lossless.**
   Scrape-time never discards parsed data; plausibility and rendering policy
-  (the 170 mph GPS-glitch ceiling, the 2 mi off-route cut) are build-time
-  choices in `build_map.py`, where a wrong threshold is a rebuild away from
-  fixed. The parser earns this trust through fixture tests, not by keeping
-  raw HTML forever — `data/raw/` is a disposable cache.
+  (the 170 mph GPS-glitch ceiling, the 10 mph stopped-train floor, the 2 mi
+  off-route cut) are build-time choices in `build_map.py`, where a wrong
+  threshold is a rebuild away from fixed. The parser earns this trust through
+  fixture tests, not by keeping raw HTML forever — `data/raw/` is a
+  disposable cache.
 - **Scraping is idempotent** — dedup on `(train, ts, lat, lon)` makes re-runs
   always safe, any cadence.
 - **Politeness is non-negotiable**: throttles, backoff, honest User-Agent.
