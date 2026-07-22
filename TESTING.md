@@ -80,6 +80,11 @@ Every test must earn its place:
 - Tests run **offline and fast**. No network, ever. Real RailRat HTML
   snippets, NTAD geometry fragments, etc. live as fixtures under
   `tests/fixtures/`.
+- **Front-end logic is testable too.** The shared map JS (`COMMON_JS` in
+  `build_map.py`) is evaluated under an embedded V8 (`mini-racer`, a dev
+  dependency) so style/filter decisions are tested against the real shipped
+  code, not string pins. DOM/event wiring remains excluded as thin
+  orchestration.
 - **CI enforces all of this**: GitHub Actions runs `pytest` (Linux +
   Windows, oldest and newest supported Python) and `ruff check` on every
   push and PR. Red CI means the change isn't done.
