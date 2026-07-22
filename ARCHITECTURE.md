@@ -24,7 +24,10 @@ archive.org ──┘        │            └─► data/station_events.jsonl 
                                                   data/geometry/)
 ```
 
-Two independently runnable stages, joined only by the JSONL datasets:
+Two independently runnable stages whose only data hand-off is the JSONL
+datasets (build also imports the scraper's `ROUTE_ALIASES` so both stages
+canonicalize route slugs identically — code shared, but no data flows through
+it):
 
 1. **Scrape** (`scrape_railrat.py`) — fetch RailRat train pages, parse the
    embedded position reports *and* the per-station Progress Tracker, append
@@ -84,6 +87,15 @@ Pipeline per run, for one route (`--route`, default `AcelaExpress`):
 
 Pipeline per run, for one route:
 
+- **Route identity** (`canonical_route`) — the `--route` argument is first
+  normalized (spacing collapsed, so the display name `Empire Builder` becomes
+  the slug `EmpireBuilder`) and run through `ROUTE_ALIASES` (imported from
+  `scrape_railrat`, the one shared alias table), then required to be a known
+  `ROUTES` key. A non-canonical or unknown name is corrected or rejected with
+  a `SystemExit` — never fetched under its raw name into a parallel
+  `data/geometry/<raw name>.geojson`, which would also match zero observations
+  (those are stored under the slug). This is the CLI half of the "canonicalize
+  at every entry point" invariant.
 - **Geometry** (`fetch_route_geometry`) — download the route's official line
   from the USDOT/BTS NTAD "Amtrak Routes" ArcGIS FeatureServer, cached in
   `data/geometry/<route>.geojson`. The `ROUTES` dict maps RailRat slug →
