@@ -85,7 +85,7 @@ def test_format_status_table_rows():
     # (thousands separators, one-decimal coverage, '-' for not-applicable,
     # yes/no wayback) so a formatting regression is visible in tests.
     rows = [
-        {"name": "Acela Express", "points": 41203, "trains": 38,
+        {"name": "AcelaExpress", "points": 41203, "trains": 38,
          "coverage": (157, 200), "latest": "2026-07-21T14:32:00", "wayback": True},
         {"name": "Vermonter", "points": 0, "trains": 0,
          "coverage": None, "latest": None, "wayback": False},
@@ -93,7 +93,7 @@ def test_format_status_table_rows():
     text = ctl.format_status_table(rows)
     lines = text.splitlines()
     assert "Route" in lines[0] and "Coverage" in lines[0] and "Wayback" in lines[0]
-    acela = next(ln for ln in lines if "Acela Express" in ln)
+    acela = next(ln for ln in lines if "AcelaExpress" in ln)
     assert "41,203" in acela and "78.5%" in acela
     assert "2026-07-21 14:32" in acela and "yes" in acela
     verm = next(ln for ln in lines if "Vermonter" in ln)

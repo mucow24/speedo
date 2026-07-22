@@ -149,8 +149,9 @@ def cmd_status():
                 (GEOMETRY / f"{r}.geojson").read_text(encoding="utf-8")))
             with contextlib.redirect_stdout(io.StringIO()):  # mute stitch notes
                 cov = coverage(parts, ROUTES.get(r, {}).get("mile0"), s["plausible"])
-        rows.append({"name": ROUTES[r]["display"] if r in ROUTES else r,
-                     "points": s["points"], "trains": s["trains"],
+        # RailRat slug, not the display name: rows copy-paste straight into
+        # --full-update / --make-map arguments.
+        rows.append({"name": r, "points": s["points"], "trains": s["trains"],
                      "coverage": cov, "latest": s["latest"], "wayback": s["wayback"]})
     print(format_status_table(rows))
 
