@@ -31,6 +31,18 @@ def test_load_filters_glitches_and_other_routes(tmp_path):
     assert [o["mph"] for o in obs] == [120, 160]
 
 
+def test_speed_color_anchors_interpolation_and_clamping(tmp_path):
+    # Purpose: pin the color ramp -- exact anchor colors at 0 and 160 mph,
+    # linear interpolation between anchors (20 mph is halfway from
+    # (220,30,30) to (255,140,0) -> (238,85,15)), and clamping outside the
+    # scale. A drifting ramp would silently re-color every map.
+    assert bm.speed_color(0) == "#dc1e1e"
+    assert bm.speed_color(160) == "#1e3cff"
+    assert bm.speed_color(20) == "#ee550f"
+    assert bm.speed_color(-10) == bm.speed_color(0)
+    assert bm.speed_color(999) == bm.speed_color(160)
+
+
 def test_glitch_ceiling_is_inclusive(tmp_path):
     # Purpose: pin the boundary -- exactly MAX_PLAUSIBLE_MPH (170) is kept,
     # one above is dropped, matching the old scrape-time filter's rule so

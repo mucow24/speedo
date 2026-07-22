@@ -43,6 +43,15 @@ def test_wayback_page_positions_and_year_inference():
     assert parsed["points"][0]["mph"] == 15
 
 
+def test_infer_year_skips_invalid_and_future_dates():
+    # Purpose: page dates are MM/DD with no year; infer_year must pick the
+    # most recent year where the date exists and isn't in the future.
+    # Feb 29 seen mid-2025 can only be 2024 (2025/2026 aren't leap years).
+    assert sr.infer_year(2, 29, dt.datetime(2025, 6, 1)) == dt.date(2024, 2, 29)
+    # A date just ahead of "now" resolves to last year, not the future.
+    assert sr.infer_year(8, 1, dt.datetime(2026, 7, 21)) == dt.date(2025, 8, 1)
+
+
 def test_misreported_route_slugs_are_canonicalized():
     # Purpose: train pages sometimes self-declare a route slug that differs
     # from the route-index slug the rest of the pipeline keys on (rosters,
