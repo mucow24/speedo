@@ -107,7 +107,7 @@ def format_status_table(rows):
             "yes" if r["wayback"] else "no",
         ])
     widths = [max(len(row[i]) for row in table) for i in range(len(header))]
-    right = {1, 2, 3}  # numeric columns
+    right = {0, 1, 2, 3}  # route names + numeric columns; names read best flush
     return "\n".join(
         "  ".join(c.rjust(widths[i]) if i in right else c.ljust(widths[i])
                   for i, c in enumerate(row)).rstrip()
@@ -149,8 +149,9 @@ def cmd_status():
                 (GEOMETRY / f"{r}.geojson").read_text(encoding="utf-8")))
             with contextlib.redirect_stdout(io.StringIO()):  # mute stitch notes
                 cov = coverage(parts, ROUTES.get(r, {}).get("mile0"), s["plausible"])
-        rows.append({"name": ROUTES[r]["display"] if r in ROUTES else r,
-                     "points": s["points"], "trains": s["trains"],
+        # RailRat slug, not the display name: rows copy-paste straight into
+        # --full-update / --make-map arguments.
+        rows.append({"name": r, "points": s["points"], "trains": s["trains"],
                      "coverage": cov, "latest": s["latest"], "wayback": s["wayback"]})
     print(format_status_table(rows))
 

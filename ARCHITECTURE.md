@@ -159,9 +159,11 @@ A thin manager over the two pipeline stages; it owns no data and does no
 parsing. Route discovery is a `data/geometry/` folder scan — a route exists
 for speedo_ctl iff its cached NTAD geometry file does.
 
-- **Status** (no args) — one table row per discovered route: stored points,
-  distinct trains, coverage, the most recent point timestamp, and whether
-  any wayback-sourced observations exist. The counts come from a single
+- **Status** (no args) — one table row per discovered route, labeled by
+  RailRat slug (not display name) so rows copy-paste straight into the
+  update/map commands: stored points, distinct trains, coverage, the most
+  recent point timestamp, and whether any wayback-sourced observations
+  exist. The counts come from a single
   pass over `observations.jsonl`. Coverage is the fraction of half-mile
   bins holding at least one plausible on-route observation, computed with
   the same spine/binning/projection code and plausibility band as
