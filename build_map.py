@@ -62,6 +62,7 @@ ROUTES = {
 }
 
 BIN_MILES = 0.5
+OUTLIER_RATIO = 1.7      # a lone point is an outlier when both neighbors beat it by this
 OFFROUTE_MILES = 2.0     # drop observations farther than this from the line
 MAX_MPH = 160            # top of the color scale
 MAX_PLAUSIBLE_MPH = 170  # above this is a GPS glitch; filtered here at build
@@ -303,6 +304,85 @@ class SegmentIndex:
         return best
 
 
+# --- post-processing --------------------------------------------------------
+# Sparse data leaves artifacts: a lone slow reading amid fast track (the one
+# train that happened to be braking there) and stretches with no data at all.
+# All decisions are made here at build time; the HTML checkboxes only pick
+# which precomputed annotation to display.
+
+def find_outliers(maxes, counts, ratio=OUTLIER_RATIO):
+    """Indices of single-point bins both of whose neighbors are >ratio x faster.
+
+    maxes/counts are one section's per-bin max mph (None = no data) and point
+    counts. A real speed restriction slows every train, so it shows in the
+    neighbors too; a lone slow point between fast bins is sampling noise.
+    Edge bins and bins with an empty neighbor are never flagged -- "both
+    neighbors faster" can't be established.
+    """
+    out = []
+    for i in range(1, len(maxes) - 1):
+        m = maxes[i]
+        if m is None or counts[i] != 1:
+            continue
+        left, right = maxes[i - 1], maxes[i + 1]
+        if left is not None and right is not None and left > ratio * m and right > ratio * m:
+            out.append(i)
+    return out
+
+
+def interpolate_gaps(maxes):
+    """Linear speed estimates for interior gaps (runs of None) in one section.
+
+    Returns {bin index: (mph, gap length in bins)}; the length lets the
+    front-end threshold how big a gap it is willing to fill. Gaps touching a
+    section end have only one bookend and are left empty.
+    """
+    filled = {}
+    i, n = 0, len(maxes)
+    while i < n:
+        if maxes[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < n and maxes[j] is None:
+            j += 1
+        if 0 < i and j < n:
+            left, right, gap = maxes[i - 1], maxes[j], j - i
+            for k in range(i, j):
+                f = (k - i + 1) / (gap + 1)
+                filled[k] = (round(left + (right - left) * f), gap)
+        i = j
+    return filled
+
+
+def annotate_bins(maxes, counts, ranges, ratio=OUTLIER_RATIO):
+    """Per-bin post-processing annotations for the front-end toggles.
+
+    ranges is [(first bin, last bin)] per section; outliers and gaps never
+    cross a section boundary. Each annotation carries "out" (single-point
+    outlier), "ia" ([mph, gap] interpolation with outliers left in) and "ib"
+    (interpolation with outliers hidden, only where it differs from "ia").
+    Both variants exist because outlier removal runs before interpolation:
+    hiding an outlier turns its bin into a fillable gap.
+    """
+    ann = {}
+    for start, last in ranges:
+        sm = maxes[start:last + 1]
+        outs = find_outliers(sm, counts[start:last + 1], ratio)
+        for i in outs:
+            ann.setdefault(start + i, {})["out"] = 1
+        ia = interpolate_gaps(sm)
+        masked = list(sm)
+        for i in outs:
+            masked[i] = None
+        for i, (v, g) in ia.items():
+            ann.setdefault(start + i, {})["ia"] = [v, g]
+        for i, (v, g) in interpolate_gaps(masked).items():
+            if ia.get(i) != (v, g):
+                ann.setdefault(start + i, {})["ib"] = [v, g]
+    return ann
+
+
 # --- color ------------------------------------------------------------------
 
 def speed_color(mph):
@@ -375,17 +455,25 @@ def build(route, engines, google_key):
     print(f"Observations: {used} used, {offroute} dropped as off-route "
           f"(>{OFFROUTE_MILES} mi from line)")
 
+    ranges = sorted({(s[3], s[5]) for s in segs})  # (first bin, last bin) per section
+    ann = annotate_bins([st["max"] if st["speeds"] else None for st in binstats],
+                        [len(st["speeds"]) for st in binstats], ranges)
+
     bins_out = []
-    for pts, mile, st in zip(bins_pts, bin_mile, binstats):
+    for i, (pts, mile, st) in enumerate(zip(bins_pts, bin_mile, binstats)):
         rec = {"m": round(mile, 1),
                "pts": [[round(la, 5), round(lo, 5)] for la, lo in pts]}
         if st["speeds"]:
             rec.update(mx=st["max"], n=len(st["speeds"]),
                        med=round(statistics.median(st["speeds"])),
                        top=list(st["top"]))
+        rec.update(ann.get(i, {}))
         bins_out.append(rec)
     empty = sum(1 for b in bins_out if "mx" not in b)
     print(f"Bins with data: {len(bins_out) - empty}/{len(bins_out)}")
+    print(f"Post-process: {sum(1 for a in ann.values() if 'out' in a)} single-point "
+          f"outliers flagged, "
+          f"{sum(1 for a in ann.values() if 'ia' in a or 'ib' in a)} bins interpolable")
 
     runs = {(o["train"], o["run_date"]) for o in obs}
     dates = sorted(o["run_date"] for o in obs)
@@ -393,6 +481,7 @@ def build(route, engines, google_key):
         "title": f"{cfg['display']} - observed speeds",
         "display": cfg["display"],
         "totalMiles": round(total, 1),
+        "binMiles": BIN_MILES,
         "maxMph": MAX_MPH,
         "anchors": [[v, "#{:02x}{:02x}{:02x}".format(*c)] for v, c in COLOR_ANCHORS],
         "stats": {"obs": used, "runs": len(runs), "from": dates[0], "to": dates[-1],
@@ -437,19 +526,86 @@ function speedColor(v){
   }
   return CFG.anchors[CFG.anchors.length-1][1];
 }
+// Post-processing toggles. Outlier removal runs before interpolation: hiding
+// an outlier turns its bin into a gap, so the build ships two interpolation
+// variants ("ia" outliers-in, "ib" outliers-hidden where it differs).
+const S = {hideOut: true, interp: true, maxGap: 10};
+
+function binState(b){
+  const hidOut = b.out === 1 && S.hideOut;
+  if (b.mx !== undefined && !hidOut) return {kind: 'data', mph: b.mx};
+  const ip = S.hideOut ? (b.ib || b.ia) : b.ia;
+  if (S.interp && ip && ip[1] <= S.maxGap)
+    return {kind: 'interp', mph: ip[0], gap: ip[1], hidOut};
+  return {kind: 'none', hidOut};
+}
+function binStyle(b){
+  const st = binState(b);
+  if (st.kind === 'data')
+    return {color: speedColor(st.mph), weight: 5, dash: null, opacity: .95};
+  if (st.kind === 'interp')
+    return {color: speedColor(st.mph), weight: 4, dash: '6 6', opacity: .85};
+  return {color: '#9aa0a6', weight: 3, dash: '3 7', opacity: .95};
+}
 function binHtml(b){
-  if (b.mx === undefined)
+  const st = binState(b);
+  const hidNote = st.hidOut ?
+    `<div class="pop-meta">outlier hidden: ${b.mx} mph (1 pt)</div>` : '';
+  if (st.kind === 'none')
     return `<div class="pop">
       <div class="pop-mph pop-nodata">&ndash;</div>
       <div class="pop-label">no data</div>
       <div class="pop-meta">mile ${b.m.toFixed(1)} of ${CFG.totalMiles}</div>
+      ${hidNote}
     </div>`;
+  if (st.kind === 'interp')
+    return `<div class="pop">
+      <div class="pop-mph" style="color:${speedColor(st.mph)}">~${st.mph}</div>
+      <div class="pop-label pop-est">interpolated</div>
+      <div class="pop-meta">no data here &ndash; estimated across a ${(st.gap * CFG.binMiles).toFixed(1)} mi gap</div>
+      <div class="pop-meta">mile ${b.m.toFixed(1)} of ${CFG.totalMiles}</div>
+      ${hidNote}
+    </div>`;
+  const outNote = (b.out === 1 && !S.hideOut) ?
+    `<div class="pop-meta pop-est">flagged single-point outlier</div>` : '';
   return `<div class="pop">
     <div class="pop-mph" style="color:${speedColor(b.mx)}">${b.mx}</div>
     <div class="pop-label">max mph</div>
     <div class="pop-meta">#${b.top[0]}, ${b.top[1]}</div>
     <div class="pop-meta">${b.n} pts, median ${b.med} mph</div>
+    ${outNote}
   </div>`;
+}
+function controlsHtml(){
+  return `<div class="lg-controls">
+    <label><input type="checkbox" id="cb-out" checked> hide single-point outliers</label>
+    <label><input type="checkbox" id="cb-interp" checked> interpolate gaps</label>
+    <div class="lg-gap" id="gap-row">
+      max gap <input type="range" id="gap-range" min="1" max="100" value="${S.maxGap}">
+      <input type="number" id="gap-num" min="1" max="100" value="${S.maxGap}"> bins
+    </div>
+  </div>`;
+}
+function wireControls(root, restyle){
+  const out = root.querySelector('#cb-out'), itp = root.querySelector('#cb-interp');
+  const rng = root.querySelector('#gap-range'), num = root.querySelector('#gap-num');
+  const apply = () => {
+    S.hideOut = out.checked;
+    S.interp = itp.checked;
+    rng.disabled = num.disabled = !itp.checked;
+    root.querySelector('#gap-row').classList.toggle('lg-off', !itp.checked);
+    restyle();
+  };
+  const setGap = v => {
+    v = Math.min(100, Math.max(1, Math.round(+v) || 1));
+    rng.value = num.value = v;
+    if (v !== S.maxGap){ S.maxGap = v; restyle(); }
+  };
+  out.addEventListener('change', apply);
+  itp.addEventListener('change', apply);
+  rng.addEventListener('input', () => setGap(rng.value));
+  num.addEventListener('change', () => setGap(num.value));
+  apply();
 }
 function legendHtml(){
   const stops = CFG.anchors.map(([s,c]) => `${c} ${s/CFG.maxMph*100}%`).join(", ");
@@ -470,6 +626,12 @@ COMMON_CSS = r"""
   .lg-bar { height: 10px; border-radius: 5px; }
   .lg-ticks { display: flex; justify-content: space-between; color: #444; margin: 2px 0 4px; }
   .lg-sub { color: #666; }
+  .lg-controls { border-top: 1px solid #ddd; margin-top: 6px; padding-top: 6px; color: #444; }
+  .lg-controls label { display: block; margin: 2px 0; }
+  .lg-gap { display: flex; align-items: center; gap: 5px; margin: 2px 0 0 18px; }
+  .lg-gap input[type=range] { width: 80px; }
+  .lg-gap input[type=number] { width: 46px; }
+  .lg-off { opacity: .45; }
 
   /* speed popup: dark rounded card, big speed number in the segment's color */
   .pop { text-align: center; font: 13px/1.35 system-ui, sans-serif; min-width: 132px; }
@@ -478,6 +640,7 @@ COMMON_CSS = r"""
   .pop-label { font-size: 20px; font-weight: 800; color: #fff; letter-spacing: 1px;
                text-transform: uppercase; margin: 2px 0 9px; }
   .pop-meta { font-size: 13px; color: #b9bdc4; margin-top: 3px; }
+  .pop-est { color: #e8b93c; }
 
   /* Leaflet popup chrome -> dark card */
   .leaflet-popup-content-wrapper { background: #232323; color: #fff; border: 3px solid #fff;
@@ -517,19 +680,21 @@ const map = L.map('map');
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'}).addTo(map);
 
+function toLeaflet(s){
+  return {color: s.color, weight: s.weight, opacity: s.opacity, dashArray: s.dash};
+}
 let bounds = [];
+const binLines = [];
 for (const b of CFG.bins){
-  const has = b.mx !== undefined;
-  const line = L.polyline(b.pts, {
-    color: has ? speedColor(b.mx) : '#9aa0a6',
-    weight: has ? 5 : 3, opacity: .95, dashArray: has ? null : '3 7',
-  }).addTo(map);
+  const line = L.polyline(b.pts, toLeaflet(binStyle(b))).addTo(map);
   line.on('click', e => L.popup().setLatLng(e.latlng).setContent(binHtml(b)).openOn(map));
   line.on('mouseover', () => line.setStyle({weight: 9}));
-  line.on('mouseout',  () => line.setStyle({weight: has ? 5 : 3}));
+  line.on('mouseout',  () => line.setStyle({weight: binStyle(b).weight}));
+  binLines.push([line, b]);
   bounds.push(b.pts[0], b.pts[b.pts.length-1]);
 }
 map.fitBounds(bounds, {padding: [20, 20]});
+const restyle = () => binLines.forEach(([line, b]) => line.setStyle(toLeaflet(binStyle(b))));
 
 const dots = L.layerGroup(CFG.obsPts.map(([la, lo, mph, train, ts]) =>
   L.circleMarker([la, lo], {radius: 3, weight: 1, color: '#fff',
@@ -538,7 +703,14 @@ const dots = L.layerGroup(CFG.obsPts.map(([la, lo, mph, train, ts]) =>
 L.control.layers(null, {'Raw observations': dots}, {collapsed: false}).addTo(map);
 
 const legend = L.control({position: 'bottomleft'});
-legend.onAdd = () => { const d = L.DomUtil.create('div', 'legend'); d.innerHTML = legendHtml(); return d; };
+legend.onAdd = () => {
+  const d = L.DomUtil.create('div', 'legend');
+  d.innerHTML = legendHtml() + controlsHtml();
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  wireControls(d, restyle);
+  return d;
+};
 legend.addTo(map);
 </script>
 </body>
@@ -568,21 +740,31 @@ function initMap(){
   const bounds = new google.maps.LatLngBounds();
   const info = new google.maps.InfoWindow();
 
+  // Google polylines have no dashArray; dashed styles are drawn as repeated
+  // line symbols over an invisible stroke.
+  function toGoogle(s){
+    if (!s.dash)
+      return {strokeColor: s.color, strokeWeight: s.weight,
+              strokeOpacity: s.opacity, icons: null};
+    return {strokeColor: s.color, strokeWeight: s.weight, strokeOpacity: 0,
+            icons: [{icon: {path: 'M 0,-1 0,1', strokeOpacity: s.opacity,
+                            strokeColor: s.color, strokeWeight: s.weight, scale: 2},
+                     offset: '0', repeat: '12px'}]};
+  }
+  const binLines = [];
   for (const b of CFG.bins){
-    const has = b.mx !== undefined;
     const path = b.pts.map(([lat, lng]) => ({lat, lng}));
-    const line = new google.maps.Polyline({
-      path, map, strokeColor: has ? speedColor(b.mx) : '#9aa0a6',
-      strokeWeight: has ? 5 : 3, strokeOpacity: .95,
-    });
+    const line = new google.maps.Polyline({path, map, ...toGoogle(binStyle(b))});
     line.addListener('click', e => {
       info.setContent(binHtml(b)); info.setPosition(e.latLng); info.open(map);
     });
-    line.addListener('mouseover', () => line.setOptions({strokeWeight: 9}));
-    line.addListener('mouseout',  () => line.setOptions({strokeWeight: has ? 5 : 3}));
+    line.addListener('mouseover', () => line.setOptions(toGoogle({...binStyle(b), weight: 9})));
+    line.addListener('mouseout',  () => line.setOptions(toGoogle(binStyle(b))));
+    binLines.push([line, b]);
     path.forEach(p => bounds.extend(p));
   }
   map.fitBounds(bounds);
+  const restyle = () => binLines.forEach(([line, b]) => line.setOptions(toGoogle(binStyle(b))));
 
   const dots = CFG.obsPts.map(([la, lo, mph, train, ts]) => {
     const m = new google.maps.Marker({
@@ -601,10 +783,11 @@ function initMap(){
 
   const wrap = document.createElement('div');
   wrap.className = 'legend';
-  wrap.innerHTML = legendHtml() +
+  wrap.innerHTML = legendHtml() + controlsHtml() +
     `<label class="lg-sub" style="display:block;margin-top:4px">
        <input type="checkbox" id="dots-cb"> show raw observations</label>`;
   map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(wrap);
+  wireControls(wrap, restyle);
   wrap.querySelector('#dots-cb').addEventListener('change', ev =>
     dots.forEach(m => m.setMap(ev.target.checked ? map : null)));
 }

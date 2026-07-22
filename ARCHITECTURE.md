@@ -102,14 +102,29 @@ Pipeline per run, for one route:
   (0.05° cells), assigns each observation to its nearest segment and thus its
   bin. `load_observations` drops GPS-glitch speeds (>170 mph) at load, and
   observations >2 mi off-route are dropped (wrong route/GPS junk).
-- **Stats & render** — each bin records max mph (which train/when set it),
-  point count, and median. **Max**, not mean, is the headline: station dwells
-  and delays shouldn't mask what the track can do — slow bins are slow only
-  where *every* train is slow. Everything is serialized into one JSON `CFG`
-  blob and substituted into two inline HTML templates: Leaflet/OSM
+- **Stats** — each bin records max mph (which train/when set it), point
+  count, and median. **Max**, not mean, is the headline: station dwells and
+  delays shouldn't mask what the track can do — slow bins are slow only
+  where *every* train is slow.
+- **Post-processing** (`find_outliers`, `interpolate_gaps`, `annotate_bins`)
+  — sparse data leaves two artifacts, and the build annotates both so the
+  front-end can toggle them. *Outliers*: a single-point bin both of whose
+  neighbors are >1.7× (`OUTLIER_RATIO`) faster is flagged — one braking
+  train, not a slow stretch (real restrictions slow every train). *Gaps*:
+  interior runs of empty bins get linear interpolations between the
+  bookending speeds, tagged with gap length. Outlier removal runs before
+  interpolation, so a hidden outlier becomes a fillable gap — both
+  interpolation variants are precomputed (`ia` outliers-in, `ib`
+  outliers-hidden where different). Neither crosses a section boundary. The
+  raw stats always ship too; the toggles are pure display.
+- **Render** — everything is serialized into one JSON `CFG` blob and
+  substituted into two inline HTML templates: Leaflet/OSM
   (`speed_map_<route>.html`, works as-is) and Google Maps
-  (`speed_map_<route>_google.html`, needs an API key). Bins with no data draw
-  gray dashed.
+  (`speed_map_<route>_google.html`, needs an API key). Bins with no data
+  draw gray dashed; interpolated bins draw color-dashed and their popups say
+  "interpolated". The legend hosts the toggles: hide outliers (default on),
+  interpolate gaps (default on), and a max-gap slider (1–100 bins, active
+  only while interpolating).
 
 ## Data layout
 
