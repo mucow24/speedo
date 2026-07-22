@@ -6,7 +6,7 @@ self-contained interactive HTML map: the route drawn as half-mile segments
 colored by the **max speed ever observed** there (red 0 mph → orange → yellow
 → green → blue 160 mph), clickable for the details at any point.
 
-Built for fun. No standing infrastructure — just two scripts and a growing
+Built for fun. No standing infrastructure — just three scripts and a growing
 pair of JSONL datasets (GPS/speed points, plus per-station arrival/departure
 timings and delays scraped from the same pages).
 
@@ -50,6 +50,17 @@ python scrape_railrat.py --reparse                   # rebuild dataset from data
 python build_map.py --route NortheastRegional        # must match a scraped route
 python build_map.py --engine leaflet                 # or: google, both (default)
 python build_map.py --google-key AIza...             # bake your key into the google file
+```
+
+Or drive everything through the manager, which handles several routes at
+once and knows the state of the dataset:
+
+```sh
+python speedo_ctl.py                                 # per-route status table
+python speedo_ctl.py --live-update Keystone Vermonter  # queued live scrapes
+python speedo_ctl.py --full-update AcelaExpress      # live + wayback backfill
+python speedo_ctl.py --make-map Vermonter            # build one route's maps
+python speedo_ctl.py --make-all-maps                 # build every route with data
 ```
 
 Notes:

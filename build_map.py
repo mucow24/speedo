@@ -179,6 +179,22 @@ def project_to_segment(p, a, b):
     return math.hypot(dx, dy), t
 
 
+def geojson_parts(gj):
+    """Extract (lat, lon) line parts from an NTAD geojson FeatureCollection."""
+    parts = []
+    for feat in gj.get("features", []):
+        geom = feat.get("geometry") or {}
+        if geom.get("type") == "LineString":
+            coords = [geom["coordinates"]]
+        elif geom.get("type") == "MultiLineString":
+            coords = geom["coordinates"]
+        else:
+            continue
+        for line in coords:
+            parts.append([(lat, lon) for lon, lat in line])
+    return parts
+
+
 def fetch_route_geometry(route):
     """Download (and cache) the NTAD line for the route as a list of parts.
 
@@ -206,17 +222,7 @@ def fetch_route_geometry(route):
         gj = json.loads(body)
         if gj.get("features"):
             cache.write_bytes(body)  # don't cache an empty result (bad name)
-    parts = []
-    for feat in gj.get("features", []):
-        geom = feat.get("geometry") or {}
-        if geom.get("type") == "LineString":
-            coords = [geom["coordinates"]]
-        elif geom.get("type") == "MultiLineString":
-            coords = geom["coordinates"]
-        else:
-            continue
-        for line in coords:
-            parts.append([(lat, lon) for lon, lat in line])
+    parts = geojson_parts(gj)
     if not parts:
         raise SystemExit(f"NTAD returned no geometry for name='{cfg['ntad']}'")
     return parts, cfg

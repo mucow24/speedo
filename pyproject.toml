@@ -13,7 +13,7 @@ dependencies = []
 dev = ["pytest", "ruff"]
 
 [tool.setuptools]
-py-modules = ["scrape_railrat", "build_map"]
+py-modules = ["scrape_railrat", "build_map", "speedo_ctl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

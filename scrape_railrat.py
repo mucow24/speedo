@@ -473,51 +473,100 @@ def wayback_snapshots(train):
     return stamps
 
 
+def wayback_plan(roster):
+    """CDX phase: resolve every train's snapshot list into one flat work list.
+
+    Returns ([(train, timestamp), ...], aborted). Doing all the lookups up
+    front is what lets the fetch phase show real progress totals. A train
+    whose lookup fails transiently is skipped (retried on a future run);
+    3 *consecutive* failures mean archive.org is rate-limiting, so the
+    whole pass aborts -- politely, resumably -- instead of hammering on.
+    """
+    plan, failures = [], 0
+    trains = sorted(roster)
+    for i, train in enumerate(trains, 1):
+        cached = (DATA / "raw" / "wayback" / f"cdx-{train}.json").exists()
+        stamps = wayback_snapshots(train)
+        if stamps is None:
+            failures += 1
+            print(f"    [{i}/{len(trains)}] train {train}: CDX lookup failed "
+                  "(rate-limited?), will retry on a future run")
+            if failures >= 3:
+                print("    3 consecutive failures -- archive.org is unhappy; "
+                      "aborting the wayback pass. Re-run later; it resumes "
+                      "from cache.")
+                return plan, True
+            continue
+        failures = 0
+        if not cached:
+            print(f"    [{i}/{len(trains)}] train {train}: {len(stamps)} snapshots")
+        plan += [(train, ts) for ts in stamps]
+    return plan, False
+
+
+def wayback_fetch_stats(plan, wbdir):
+    """(total, already on disk, to fetch) snapshot counts for the progress
+    header, so a resumed pass shows how little is actually left."""
+    cached = sum(1 for train, ts in plan if (wbdir / f"{train}-{ts}.html").exists())
+    return len(plan), cached, len(plan) - cached
+
+
 def scrape_wayback(route, roster, seen, seen_stn):
+    """Two-phase wayback backfill; returns (added, stn_added, aborted)."""
     total_added = stn_added = 0
     wbdir = DATA / "raw" / "wayback"
     wbdir.mkdir(parents=True, exist_ok=True)
 
-    failures = 0
+    trains = sorted(roster)
+    have_cdx = sum(1 for t in trains if (wbdir / f"cdx-{t}.json").exists())
+    print(f"  CDX phase: snapshot lists for {len(trains)} trains "
+          f"({have_cdx} cached, {len(trains) - have_cdx} to look up)")
+    plan, aborted = wayback_plan(roster)
+    if aborted:
+        return total_added, stn_added, True
+
+    total, cached, to_fetch = wayback_fetch_stats(plan, wbdir)
+    print(f"  Fetch phase: {total} snapshots, {cached} already on disk, "
+          f"{to_fetch} to fetch (~{round(to_fetch * THROTTLE_WAYBACK / 60)} min "
+          f"at {THROTTLE_WAYBACK:.0f} s/req)")
+    fetched = failed = 0
     with OBS_FILE.open("a", encoding="utf-8") as out_f, \
          STN_FILE.open("a", encoding="utf-8") as stn_f:
-        for i, train in enumerate(sorted(roster), 1):
-            stamps = wayback_snapshots(train)
-            if stamps is None:
-                failures += 1
-                print(f"  [{i}/{len(roster)}] train {train}: CDX lookup failed "
-                      "(rate-limited?), will retry on a future run")
-                if failures >= 3:
-                    print("  3 consecutive failures -- archive.org is unhappy; "
-                          "aborting the wayback pass. Re-run --wayback later; "
-                          "it resumes from cache.")
-                    break
-                continue
-            failures = 0
-            print(f"  [{i}/{len(roster)}] train {train}: {len(stamps)} snapshots")
-            for ts in stamps:
-                snapfile = wbdir / f"{train}-{ts}.html"
-                if snapfile.exists():
-                    text = snapfile.read_text(encoding="utf-8")
-                else:
-                    # id_ serves the original page bytes without archive toolbar
-                    text = fetch(f"https://web.archive.org/web/{ts}id_/{BASE}/trains/{train}/",
-                                 throttle=THROTTLE_WAYBACK)
-                    if text is None:
-                        continue
-                    snapfile.write_text(text, encoding="utf-8")
-                snap_dt = dt.datetime.strptime(ts[:8], "%Y%m%d")
-                parsed = parse_train_page(text, snap_dt)
-                if parsed is None or parsed["route"] != route:
+        for train, ts in plan:
+            snapfile = wbdir / f"{train}-{ts}.html"
+            was_cached = snapfile.exists()
+            if was_cached:
+                text = snapfile.read_text(encoding="utf-8")
+            else:
+                # id_ serves the original page bytes without archive toolbar
+                text = fetch(f"https://web.archive.org/web/{ts}id_/{BASE}/trains/{train}/",
+                             throttle=THROTTLE_WAYBACK)
+                if text is None:
+                    failed += 1
+                    print(f"    [{fetched + failed}/{to_fetch}] train {train} @{ts[:8]}: "
+                          "fetch failed, will retry on a future run")
                     continue
+                snapfile.write_text(text, encoding="utf-8")
+                fetched += 1
+            snap_dt = dt.datetime.strptime(ts[:8], "%Y%m%d")
+            parsed = parse_train_page(text, snap_dt)
+            usable = parsed is not None and parsed["route"] == route
+            if usable:
                 added = append_parsed(parsed, seen, f"wayback:{ts}", out_f)
                 s_added = append_station_events(parsed, seen_stn, f"wayback:{ts}", stn_f)
                 total_added += added
                 stn_added += s_added
-                if added or s_added:
-                    print(f"      {ts[:8]}: {added} new points, {s_added} new "
-                          f"station events ({parsed['run_date']})")
-    return total_added, stn_added
+            if not was_cached:
+                note = (f"{added} new points, {s_added} new station events" if usable
+                        else "no usable data" if parsed is None
+                        else f"belongs to {parsed['route']}")
+                print(f"    [{fetched + failed}/{to_fetch}] train {train} @{ts[:8]}: {note}")
+            elif usable and (added or s_added):
+                print(f"    train {train} @{ts[:8]} (cached): {added} new points, "
+                      f"{s_added} new station events")
+    print(f"  Wayback pass done: {fetched} fetched, {failed} failed, "
+          f"{total_added} new points, {stn_added} new station events")
+    return total_added, stn_added, False
 
 
 # --- reparse ----------------------------------------------------------------
@@ -597,8 +646,9 @@ def main():
 
     if args.wayback:
         print("Wayback backfill (slow, archive.org rate limits)...")
-        wb_added, wb_stn = scrape_wayback(args.route, roster, seen, seen_stn)
-        print(f"Wayback backfill: {wb_added} new observations, {wb_stn} new station events")
+        wb_added, wb_stn, aborted = scrape_wayback(args.route, roster, seen, seen_stn)
+        print(f"Wayback backfill: {wb_added} new observations, {wb_stn} new station events"
+              + (" (aborted early; re-run to resume)" if aborted else ""))
 
     total = sum(1 for _ in OBS_FILE.open(encoding="utf-8")) if OBS_FILE.exists() else 0
     stn_total = sum(1 for _ in STN_FILE.open(encoding="utf-8")) if STN_FILE.exists() else 0
