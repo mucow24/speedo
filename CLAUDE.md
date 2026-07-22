@@ -1,6 +1,6 @@
 # speedo — project rules
 
-Two stdlib-only Python scripts that map observed Amtrak speeds. Read
+Three stdlib-only Python scripts that map observed Amtrak speeds. Read
 [ARCHITECTURE.md](ARCHITECTURE.md) before making changes.
 
 ## Hard rules

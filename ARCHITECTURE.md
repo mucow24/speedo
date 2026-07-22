@@ -9,8 +9,9 @@
 
 speedo maps how fast Amtrak trains actually go, mile by mile, from
 position/speed reports scraped off RailRat.net. It is deliberately
-infrastructure-free: two stdlib-only Python scripts and a growing JSONL file.
-No pip installs, no database, no server — output is self-contained HTML.
+infrastructure-free: three stdlib-only Python scripts and a growing JSONL
+file. No pip installs, no database, no server — output is self-contained
+HTML.
 
 ## The pipeline
 
@@ -36,6 +37,10 @@ it):
    downstream.
 2. **Build** (`build_map.py`) — project all accumulated observations onto the
    official route line and render interactive speed maps.
+
+`speedo_ctl.py` sits above both stages as an optional manager (dataset
+status, queued multi-route updates, batch map builds); it owns no data and
+no parsing of its own.
 
 RailRat only serves each train's *latest* run, so history accumulates across
 repeated scrapes. That is why the dataset — not any single scrape — is the
@@ -74,10 +79,15 @@ Pipeline per run, for one route (`--route`, default `AcelaExpress`):
   consumers merge by train/run/station). Nothing parseable is discarded:
   even implausible speeds are stored, and filtered only at build time. Raw
   page HTML is saved under `data/raw/<scrape-date>/` first.
-- **Wayback** (`--wayback`) — optional archive.org backfill. CDX snapshot
-  lookups and snapshot bodies are cached under `data/raw/wayback/`; transient
-  failures are *not* cached, so an aborted pass resumes cleanly. Aborts after
-  3 consecutive CDX failures (archive.org rate-limiting).
+- **Wayback** (`--wayback`) — optional archive.org backfill, in two phases
+  so progress totals are known up front: `wayback_plan` resolves every
+  roster train's CDX snapshot list into one flat work list, then the fetch
+  phase reports "X snapshots, Y on disk, Z to fetch" with a per-fetch
+  counter and throttle-based ETA. CDX lookups and snapshot bodies are
+  cached under `data/raw/wayback/`; transient failures are *not* cached, so
+  an aborted pass resumes cleanly. Aborts after 3 consecutive CDX failures
+  (archive.org rate-limiting), and `scrape_wayback` returns that abort flag
+  to callers (speedo_ctl uses it to cancel remaining queued wayback jobs).
 - **Reparse** (`--reparse`) — rebuild both datasets from scratch from
   whatever is under `data/raw/**`, no network. Useful for re-applying parser
   improvements to pages still on disk, but no longer load-bearing: the JSONL
@@ -142,6 +152,34 @@ Pipeline per run, for one route:
   "interpolated". The legend hosts the toggles: hide outliers (default on),
   interpolate gaps (default on), and a max-gap slider (1–100 bins, active
   only while interpolating).
+
+## speedo_ctl.py
+
+A thin manager over the two pipeline stages; it owns no data and does no
+parsing. Route discovery is a `data/geometry/` folder scan — a route exists
+for speedo_ctl iff its cached NTAD geometry file does.
+
+- **Status** (no args) — one table row per discovered route: stored points,
+  distinct trains, coverage, the most recent point timestamp, and whether
+  any wayback-sourced observations exist. The counts come from a single
+  pass over `observations.jsonl`. Coverage is the fraction of half-mile
+  bins holding at least one plausible on-route observation, computed with
+  the same spine/binning/projection code and plausibility band as
+  `build_map.build`, so the percentage predicts what the map will paint
+  (colored bins vs. the gray no-data dash). Status never touches the
+  network: geometry is read straight from the cache files that define the
+  route list.
+- **Updates** (`--live-update`, `--full-update`) — a strictly sequential
+  job queue; the scrapers' politeness throttles are per-process, so a
+  parallel queue would multiply the request rate. A full update runs every
+  route's live scrape first (fast, freshest data), then the slow wayback
+  passes; a wayback abort (archive.org rate-limiting) cancels the remaining
+  queued wayback jobs.
+- **Maps** (`--make-map`, `--make-all-maps`) — `build_map.build` per route,
+  skipping routes with no usable observations or no `ROUTES` entry.
+
+CLI route arguments are canonicalized through `canonical_route` and
+deduped, keeping the "canonicalize at every entry point" invariant.
 
 ## Data layout
 
