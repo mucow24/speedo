@@ -1,0 +1,13 @@
+[project]
+name = "speedo"
+version = "0.1.0"
+description = "Maps how fast Amtrak trains actually go, from RailRat position reports"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

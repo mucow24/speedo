@@ -18,5 +18,6 @@ Two stdlib-only Python scripts that map observed Amtrak speeds. Read
   stdlib option; prefer stdlib only when the choices are equally good. Tests
   run offline via `pytest`.
 - **Never weaken scraper politeness** (throttles, backoff, User-Agent).
-- `data/observations.jsonl` is derived data — parser changes must keep
-  `--reparse` able to rebuild it from `data/raw/`.
+- **Ingest is lossless.** The JSONL datasets in `data/` are the source of
+  truth; scrape-time never discards parsed data — plausibility filters are
+  build-time policy in `build_map.py`. `data/raw/` is a disposable cache.

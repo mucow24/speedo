@@ -7,7 +7,8 @@ colored by the **max speed ever observed** there (red 0 mph → orange → yello
 → green → blue 160 mph), clickable for the details at any point.
 
 Built for fun. No standing infrastructure — just two scripts and a growing
-JSONL file.
+pair of JSONL datasets (GPS/speed points, plus per-station arrival/departure
+timings and delays scraped from the same pages).
 
 ## Running it
 
@@ -68,8 +69,10 @@ Notes:
   Leaflet marker calls — exact lat/lon, time, mph, heading, every ~3–6 min.
   `scrape_railrat.py` fetches the route's train pages (1 req/sec, ~40 pages),
   parses those markers, and appends anything new to `data/observations.jsonl`.
-  Raw HTML is kept under `data/raw/` so the dataset can be rebuilt after parser
-  changes with `--reparse`.
+  Each page's "Progress Tracker" (per-station actual arrival/departure times
+  and delay vs. schedule) is parsed too, into `data/station_events.jsonl`.
+  Raw HTML is cached under `data/raw/` (disposable; `--reparse` rebuilds both
+  datasets from whatever is there, e.g. after parser improvements).
 - **History**: RailRat only serves the latest run per train number, so history
   accumulates as you re-run the scraper. Two freebies help: train numbers that
   rotated out of the schedule still hold their last-ever run (months old), and
@@ -84,7 +87,8 @@ Notes:
   across them — so station
   dwells and delay slowdowns don't hide what the track can do; they only show
   up where *every* train is slow (station throats, curves, speed-restricted
-  territory). Points >2 mi off-route or >170 mph (GPS glitches) are dropped.
+  territory). Points >2 mi off-route or >170 mph (GPS glitches) are ignored
+  at build time (they stay in the dataset; scraping never discards data).
 
 ## Data notes
 
@@ -92,6 +96,10 @@ Notes:
   are inferred by walking backward from the page's "updated" stamp.
 - `data/observations.jsonl` is append-only and deduped on
   (train, timestamp, position) — re-scraping is always safe.
+- `data/station_events.jsonl` is append-only too; as a run progresses, a
+  station's record can appear in several progressively-more-complete
+  variants (arrival first, departure and delay later) — merge by
+  (train, run_date, station) when consuming it.
 - Gray dashed bins = no observations yet. Expect a permanent gap around miles
   229–234 (from Boston): that's Penn Station and the Hudson/East River tunnels,
   where GPS genuinely can't reach.

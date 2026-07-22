@@ -7,11 +7,17 @@ completed) run directly in the train page HTML, as Leaflet marker calls:
     L.circleMarker([40.324250,-74.613710],blueCircle).addTo(mymap)
       .bindPopup("<b>Acela Express 2151</b><small><br>09:44 39 mi NE of PHL, 158&nbsp;mph&nbsp;SW</small>");
 
+Each page also carries a "Progress Tracker": per-station actual arrival and
+departure times with delay-vs-schedule.
+
 This script fetches every train page for a route and accumulates the parsed
-points into data/observations.jsonl. RailRat only keeps the latest run per
-train, so run this whenever you like -- each run merges in whatever is new
-and skips points already recorded. With --wayback it also harvests whatever
-historical snapshots of the train pages the Internet Archive happens to have.
+position reports into data/observations.jsonl and the station timings into
+data/station_events.jsonl. Ingest is lossless -- every parsed value is
+stored; plausibility filtering (GPS glitches etc.) happens at build time.
+RailRat only keeps the latest run per train, so run this whenever you like --
+each run merges in whatever is new and skips records already on file. With
+--wayback it also harvests whatever historical snapshots of the train pages
+the Internet Archive happens to have.
 
 Usage:
     python scrape_railrat.py                        # Acela, live pages
@@ -35,16 +41,21 @@ BASE = "https://railrat.net"
 UA = "speedo/0.1 (personal hobby project mapping train speeds; polite: 1 req/sec)"
 THROTTLE_LIVE = 1.0      # seconds between requests to railrat.net
 THROTTLE_WAYBACK = 10.0  # archive.org rate-limits hard; be extra gentle
-MAX_PLAUSIBLE_MPH = 170  # anything above this is a GPS glitch
 
 DATA = Path(__file__).parent / "data"
 OBS_FILE = DATA / "observations.jsonl"
+STN_FILE = DATA / "station_events.jsonl"
 
 # RailRat's train pages sometimes self-declare a route slug that differs from
 # the one its route index uses (Keystone train pages link /routes/Keystone/,
-# which 404s; the route page lives at /routes/KeystoneService/). Canonicalize
-# to the route-index slug so the mismatch check doesn't reject real trains.
-ROUTE_ALIASES = {"Keystone": "KeystoneService"}
+# which 404s; the route page lives at /routes/KeystoneService/; 2020-era
+# Michigan pages say /routes/MichiganServices/). Canonicalize to the
+# route-index slug so the mismatch check doesn't reject real trains and
+# historical runs don't get filed under a slug nothing else recognizes.
+ROUTE_ALIASES = {
+    "Keystone": "KeystoneService",
+    "MichiganServices": "WolverineMichiganService",
+}
 
 # --- fetching ---------------------------------------------------------------
 
@@ -95,6 +106,22 @@ MARKER_RE = re.compile(
 POPUP_RE = re.compile(
     r"<small><br>(\d{1,2}):(\d{2})\s+(.*?),\s*(\d+)\s*mph(?:\s+([NSEW]{1,3}))?\s*</small>")
 
+# Progress Tracker: one <li> per station. Current pages state a delay for the
+# departure and tuck the bare arrival time into a viewport span; 2020-era
+# pages have one bold verb per row ("departed"/"arrived"/"completed") with an
+# "ET" suffix. Delays may be color-wrapped (<span class="yellow">...) and
+# "est." rows are predictions, not events -- none of the actual-event
+# patterns below can match them ("arrival"/"departure" vs "arrived"/
+# "departed", no bold verb).
+TRACKER_RE = re.compile(r'<div id="train_progress">.*?</ol>', re.S)
+TRACKER_LI_RE = re.compile(
+    r'<li><a href="/stations/([A-Z0-9]+)/" title="([^"]*)">[^<]*</a>,\s*([^\n]*)')
+_DELAY = r"(?:<span[^>]*>)?(on time|\d+\s*min\.\s*(?:late|early))"
+DEP_RE = re.compile(r"<b>departed</b>\s*(\d{1,2}):(\d{2})(?:\s*ET)?,\s*" + _DELAY)
+ARR_BOLD_RE = re.compile(r"<b>arrived</b>\s*(\d{1,2}):(\d{2})(?:\s*ET)?,\s*" + _DELAY)
+ARR_PLAIN_RE = re.compile(r",\s*arrived\s*(\d{1,2}):(\d{2})")
+COMPLETED_RE = re.compile(r"<b>completed</b>,?\s*(\d{1,2}):(\d{2})")
+
 
 def clean_popup(s):
     s = s.replace("&nbsp;", " ")
@@ -119,13 +146,72 @@ def infer_year(month, day, now):
     return None
 
 
+def parse_delay(s):
+    """'on time' -> 0, 'N min. late' -> +N, 'N min. early' -> -N."""
+    if s == "on time":
+        return 0
+    n = int(re.match(r"\d+", s).group(0))
+    return -n if "early" in s else n
+
+
+def parse_station_entries(text):
+    """Extract per-station actual events (clock times only, dates come later).
+
+    Returns tracker-order dicts: station, name, arr_hm/dep_hm ((hh, mm) or
+    None), arr_delay/dep_delay (minutes or None). Rows with only "est."
+    predictions are skipped; a "completed" row is the destination arrival.
+    """
+    m = TRACKER_RE.search(text)
+    if not m:
+        return []
+    entries = []
+    for code, name, body in TRACKER_LI_RE.findall(m.group(0)):
+        e = {"station": code, "name": name.strip(),
+             "arr_hm": None, "arr_delay": None, "dep_hm": None, "dep_delay": None}
+        d = DEP_RE.search(body)
+        if d:
+            e["dep_hm"] = (int(d.group(1)), int(d.group(2)))
+            e["dep_delay"] = parse_delay(d.group(3))
+        a = ARR_BOLD_RE.search(body)
+        if a:
+            e["arr_hm"] = (int(a.group(1)), int(a.group(2)))
+            e["arr_delay"] = parse_delay(a.group(3))
+        else:
+            a = ARR_PLAIN_RE.search(body) or COMPLETED_RE.search(body)
+            if a:
+                e["arr_hm"] = (int(a.group(1)), int(a.group(2)))
+        if e["arr_hm"] or e["dep_hm"]:
+            entries.append(e)
+    return entries
+
+
+def walk_dates_backward(items, anchor_date, anchor_minutes):
+    """Assign a date to each (hh, mm) item, walking newest -> oldest.
+
+    Times on the page are clock-only; walking into the past from the anchor,
+    a small clock increase is out-of-order jitter but a large jump (>12h)
+    means we crossed midnight, so decrement the date. Yields ISO timestamps
+    in input order. Assumes consecutive items are less than ~12h apart.
+    """
+    date, prev_minutes = anchor_date, anchor_minutes
+    out = []
+    for hh, mm in items:
+        minutes = hh * 60 + mm
+        if minutes > prev_minutes + 12 * 60:
+            date = date - dt.timedelta(days=1)
+            prev_minutes = minutes
+        elif minutes < prev_minutes:
+            prev_minutes = minutes
+        out.append(f"{date.isoformat()}T{hh:02d}:{mm:02d}:00")
+    return out
+
+
 def parse_train_page(text, now):
     """Parse one train page. Returns dict or None if page has no usable data.
 
-    Points come out newest-first (document order) with full timestamps,
-    dated by walking backward from the page's "updated HH:MM on MM/DD" stamp:
-    whenever clock time increases as we walk into the past, we crossed
-    midnight, so decrement the date.
+    Position points come out newest-first (document order); station events
+    oldest-first (tracker order). Both carry full timestamps, dated by
+    walking backward from the page's "updated HH:MM on MM/DD" stamp.
     """
     m = H1_RE.search(text)
     if not m:
@@ -155,32 +241,42 @@ def parse_train_page(text, now):
             "mph": int(pm.group(4)),
             "heading": pm.group(5) or "",
         })
-    if not raw_pts:
-        return None
 
-    # Walk backward through time assigning dates. Position reports can arrive
-    # slightly out of order, so a small clock increase toward the past is just
-    # jitter; only a large jump (>12h) means we crossed midnight.
-    date = upd_date
-    prev_minutes = raw_pts[0]["hh"] * 60 + raw_pts[0]["mm"]
+    # Points are newest-first already; anchor at the newest point itself (the
+    # page updates when a report arrives, so it coincides with the stamp).
     points = []
-    for p in raw_pts:
-        minutes = p["hh"] * 60 + p["mm"]
-        if minutes > prev_minutes + 12 * 60:  # older point, much later clock
-            date = date - dt.timedelta(days=1)
-            prev_minutes = minutes
-        elif minutes < prev_minutes:
-            prev_minutes = minutes
-        ts = f"{date.isoformat()}T{p['hh']:02d}:{p['mm']:02d}:00"
-        points.append({
+    if raw_pts:
+        stamps = walk_dates_backward(
+            [(p["hh"], p["mm"]) for p in raw_pts],
+            upd_date, raw_pts[0]["hh"] * 60 + raw_pts[0]["mm"])
+        points = [{
             "ts": ts, "lat": p["lat"], "lon": p["lon"],
             "mph": p["mph"], "heading": p["heading"], "desc": p["desc"],
-        })
+        } for p, ts in zip(raw_pts, stamps)]
 
-    run_date = min(p["ts"] for p in points)[:10]
+    # Station events are oldest-first and can trail the newest position by
+    # hours, so anchor at the updated stamp and walk them reversed.
+    entries = parse_station_entries(text)
+    flat = [(e, kind) for e in entries
+            for kind in ("arr", "dep") if e[kind + "_hm"]]
+    stamps = walk_dates_backward(
+        [e[kind + "_hm"] for e, kind in reversed(flat)],
+        upd_date, int(u.group(1)) * 60 + int(u.group(2)))
+    for (e, kind), ts in zip(reversed(flat), stamps):
+        e[kind] = ts
+    station_events = [{
+        "station": e["station"], "name": e["name"],
+        "arr": e.get("arr"), "arr_delay": e["arr_delay"],
+        "dep": e.get("dep"), "dep_delay": e["dep_delay"],
+    } for e in entries]
+
+    if not points and not station_events:
+        return None
+    run_date = min([p["ts"] for p in points] +
+                   [t for e in station_events for t in (e["arr"], e["dep"]) if t])[:10]
     return {
         "route": route_slug, "route_name": route_name, "train": train,
-        "run_date": run_date, "points": points,
+        "run_date": run_date, "points": points, "station_events": station_events,
     }
 
 
@@ -204,17 +300,60 @@ def load_seen():
 
 
 def append_parsed(parsed, seen, src, out_f):
-    """Write points not seen before. Returns number added."""
+    """Write points not seen before. Returns number added.
+
+    Lossless: even implausible speeds are stored -- glitch filtering is
+    build-time policy (see build_map.MAX_PLAUSIBLE_MPH), not data loss.
+    """
     added = 0
     for p in parsed["points"]:
         key = obs_key(parsed["train"], p["ts"], p["lat"], p["lon"])
-        if key in seen or p["mph"] > MAX_PLAUSIBLE_MPH:
+        if key in seen:
             continue
         seen.add(key)
         rec = {
             "route": parsed["route"], "train": parsed["train"],
             "run_date": parsed["run_date"], **p, "src": src,
         }
+        out_f.write(json.dumps(rec) + "\n")
+        added += 1
+    return added
+
+
+def stn_key(train, e):
+    return (f'{train}|{e["station"]}|{e["arr"]}|{e["arr_delay"]}'
+            f'|{e["dep"]}|{e["dep_delay"]}')
+
+
+def load_seen_stations():
+    seen = set()
+    if STN_FILE.exists():
+        with STN_FILE.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                seen.add(stn_key(o["train"], o))
+    return seen
+
+
+def append_station_events(parsed, seen, src, out_f):
+    """Write station events not seen before. Returns number added.
+
+    The key covers the full event content: as a run progresses, a station's
+    record gains fields across page fetches (arrival first, departure and
+    delay later) and each distinct variant is appended -- consumers merge by
+    (train, run_date, station), preferring the most complete record.
+    """
+    added = 0
+    for e in parsed["station_events"]:
+        key = stn_key(parsed["train"], e)
+        if key in seen:
+            continue
+        seen.add(key)
+        rec = {"route": parsed["route"], "train": parsed["train"],
+               "run_date": parsed["run_date"], **e, "src": src}
         out_f.write(json.dumps(rec) + "\n")
         added += 1
     return added
@@ -254,14 +393,15 @@ def update_roster_from_route_page(route, roster):
 
 # --- live scrape ------------------------------------------------------------
 
-def scrape_live(route, roster, seen):
-    total_added = 0
+def scrape_live(route, roster, seen, seen_stn):
+    total_added = stn_added = 0
     scrape_day = dt.date.today().isoformat()
     rawdir = DATA / "raw" / scrape_day
     rawdir.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now()
 
-    with OBS_FILE.open("a", encoding="utf-8") as out_f:
+    with OBS_FILE.open("a", encoding="utf-8") as out_f, \
+         STN_FILE.open("a", encoding="utf-8") as stn_f:
         for i, train in enumerate(sorted(roster), 1):
             text = fetch(f"{BASE}/trains/{train}/")
             if text is None:
@@ -269,7 +409,7 @@ def scrape_live(route, roster, seen):
                 continue
             parsed = parse_train_page(text, now)
             if parsed is None:
-                print(f"  [{i}/{len(roster)}] train {train}: no position data")
+                print(f"  [{i}/{len(roster)}] train {train}: no usable data")
                 continue
             if parsed["route"] != route:
                 print(f"  [{i}/{len(roster)}] train {train}: belongs to {parsed['route']}, skipping")
@@ -280,10 +420,12 @@ def scrape_live(route, roster, seen):
             if not rawfile.exists():
                 rawfile.write_text(text, encoding="utf-8")
             added = append_parsed(parsed, seen, "live", out_f)
+            s_added = append_station_events(parsed, seen_stn, "live", stn_f)
             total_added += added
+            stn_added += s_added
             print(f"  [{i}/{len(roster)}] train {train}: {len(parsed['points'])} points "
-                  f"({parsed['run_date']}), {added} new")
-    return total_added
+                  f"({parsed['run_date']}), {added} new, {s_added} new station events")
+    return total_added, stn_added
 
 
 # --- wayback backfill -------------------------------------------------------
@@ -317,13 +459,14 @@ def wayback_snapshots(train):
     return stamps
 
 
-def scrape_wayback(route, roster, seen):
-    total_added = 0
+def scrape_wayback(route, roster, seen, seen_stn):
+    total_added = stn_added = 0
     wbdir = DATA / "raw" / "wayback"
     wbdir.mkdir(parents=True, exist_ok=True)
 
     failures = 0
-    with OBS_FILE.open("a", encoding="utf-8") as out_f:
+    with OBS_FILE.open("a", encoding="utf-8") as out_f, \
+         STN_FILE.open("a", encoding="utf-8") as stn_f:
         for i, train in enumerate(sorted(roster), 1):
             stamps = wayback_snapshots(train)
             if stamps is None:
@@ -354,16 +497,19 @@ def scrape_wayback(route, roster, seen):
                 if parsed is None or parsed["route"] != route:
                     continue
                 added = append_parsed(parsed, seen, f"wayback:{ts}", out_f)
+                s_added = append_station_events(parsed, seen_stn, f"wayback:{ts}", stn_f)
                 total_added += added
-                if added:
-                    print(f"      {ts[:8]}: {added} new points ({parsed['run_date']})")
-    return total_added
+                stn_added += s_added
+                if added or s_added:
+                    print(f"      {ts[:8]}: {added} new points, {s_added} new "
+                          f"station events ({parsed['run_date']})")
+    return total_added, stn_added
 
 
 # --- reparse ----------------------------------------------------------------
 
 def reparse_raw():
-    """Rebuild observations.jsonl from the saved raw HTML snapshots.
+    """Rebuild both datasets from the saved raw HTML snapshots.
 
     Lets parser fixes be re-applied to everything already fetched, without
     touching the network. The date anchor comes from the snapshot's own
@@ -374,9 +520,11 @@ def reparse_raw():
     if not files:
         sys.exit("no raw snapshots under data/raw to reparse")
     tmp = OBS_FILE.with_suffix(".jsonl.tmp")
-    seen = set()
-    total = 0
-    with tmp.open("w", encoding="utf-8") as out_f:
+    stn_tmp = STN_FILE.with_suffix(".jsonl.tmp")
+    seen, seen_stn = set(), set()
+    total = stn_total = 0
+    with tmp.open("w", encoding="utf-8") as out_f, \
+         stn_tmp.open("w", encoding="utf-8") as stn_f:
         for f in files:
             rel = f.relative_to(DATA / "raw")
             if rel.parts[0] == "wayback":
@@ -392,8 +540,11 @@ def reparse_raw():
             if parsed is None:
                 continue
             total += append_parsed(parsed, seen, src, out_f)
+            stn_total += append_station_events(parsed, seen_stn, src, stn_f)
     tmp.replace(OBS_FILE)
-    print(f"Reparsed {len(files)} snapshots -> {total} observations in {OBS_FILE}")
+    stn_tmp.replace(STN_FILE)
+    print(f"Reparsed {len(files)} snapshots -> {total} observations, "
+          f"{stn_total} station events")
 
 
 # --- main -------------------------------------------------------------------
@@ -416,7 +567,8 @@ def main():
         return
     args.route = ROUTE_ALIASES.get(args.route, args.route)
     seen = load_seen()
-    print(f"{len(seen)} observations already on file")
+    seen_stn = load_seen_stations()
+    print(f"{len(seen)} observations, {len(seen_stn)} station events already on file")
 
     roster = load_roster(args.route)
     roster |= {int(t) for t in args.trains.split(",") if t.strip().isdigit()}
@@ -426,16 +578,17 @@ def main():
     save_roster(args.route, roster)
 
     print(f"Scraping {len(roster)} live train pages...")
-    added = scrape_live(args.route, roster, seen)
-    print(f"Live scrape: {added} new observations")
+    added, stn_added = scrape_live(args.route, roster, seen, seen_stn)
+    print(f"Live scrape: {added} new observations, {stn_added} new station events")
 
     if args.wayback:
         print("Wayback backfill (slow, archive.org rate limits)...")
-        wb_added = scrape_wayback(args.route, roster, seen)
-        print(f"Wayback backfill: {wb_added} new observations")
+        wb_added, wb_stn = scrape_wayback(args.route, roster, seen, seen_stn)
+        print(f"Wayback backfill: {wb_added} new observations, {wb_stn} new station events")
 
     total = sum(1 for _ in OBS_FILE.open(encoding="utf-8")) if OBS_FILE.exists() else 0
-    print(f"Done. {total} total observations in {OBS_FILE}")
+    stn_total = sum(1 for _ in STN_FILE.open(encoding="utf-8")) if STN_FILE.exists() else 0
+    print(f"Done. {total} observations, {stn_total} station events on file")
 
 
 if __name__ == "__main__":

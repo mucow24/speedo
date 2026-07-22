@@ -64,6 +64,8 @@ ROUTES = {
 BIN_MILES = 0.5
 OFFROUTE_MILES = 2.0     # drop observations farther than this from the line
 MAX_MPH = 160            # top of the color scale
+MAX_PLAUSIBLE_MPH = 170  # above this is a GPS glitch; filtered here at build
+                         # time -- ingest (scrape_railrat) stores everything
 SIMPLIFY_MILES = 0.015   # ~25 m Douglas-Peucker tolerance
 MIN_SECTION_MILES = 5.0  # stitched leftovers shorter than this are scraps, not track
 DUP_TOL_MILES = 0.15     # a part everywhere this close to a longer one is a duplicate
@@ -315,6 +317,27 @@ def speed_color(mph):
 
 # --- main build -------------------------------------------------------------
 
+def load_observations(path, route):
+    """Load one route's observations, dropping GPS-glitch speeds.
+
+    Ingest is lossless, so the plausibility ceiling lives here: a wrong
+    threshold is a rebuild away from being fixed, not permanent data loss.
+    """
+    obs, glitches = [], 0
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            o = json.loads(line)
+            if o["route"] != route:
+                continue
+            if o["mph"] > MAX_PLAUSIBLE_MPH:
+                glitches += 1
+                continue
+            obs.append(o)
+    if glitches:
+        print(f"  ignored {glitches} glitch points (>{MAX_PLAUSIBLE_MPH} mph)")
+    return obs
+
+
 def short_ts(ts):
     return f"{ts[5:7]}/{ts[8:10]} {ts[11:16]}"
 
@@ -329,12 +352,7 @@ def build(route, engines, google_key):
           f"after simplify, {total:.1f} miles in {len(sections)} section(s), "
           f"{len(bins_pts)} bins of {BIN_MILES} mi")
 
-    obs = []
-    with (DATA / "observations.jsonl").open(encoding="utf-8") as f:
-        for line in f:
-            o = json.loads(line)
-            if o["route"] == route:
-                obs.append(o)
+    obs = load_observations(DATA / "observations.jsonl", route)
     if not obs:
         raise SystemExit(f"no observations for route {route} - run scrape_railrat.py first")
 

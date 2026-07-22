@@ -15,18 +15,22 @@ No pip installs, no database, no server — output is self-contained HTML.
 ## The pipeline
 
 ```
-railrat.net ──► scrape_railrat.py ──► data/observations.jsonl ──► build_map.py ──► out/speed_map_<route>.html
-archive.org ──┘        │                                               ▲
-  (--wayback)          └──► data/raw/**.html  ── (--reparse) ──────────┘
-                                                     NTAD ArcGIS ──────┘
-                                              (route geometry, cached in
-                                                 data/geometry/)
+railrat.net ──► scrape_railrat.py ──┬─► data/observations.jsonl ───► build_map.py ──► out/speed_map_<route>.html
+archive.org ──┘        │            └─► data/station_events.jsonl        ▲
+  (--wayback)          └──► data/raw/**.html ──(--reparse: rebuilds      │
+                            (disposable cache)  both datasets)           │
+                                                      NTAD ArcGIS ───────┘
+                                               (route geometry, cached in
+                                                  data/geometry/)
 ```
 
-Two independently runnable stages, joined only by `data/observations.jsonl`:
+Two independently runnable stages, joined only by the JSONL datasets:
 
 1. **Scrape** (`scrape_railrat.py`) — fetch RailRat train pages, parse the
-   embedded position reports, append what's new to the dataset.
+   embedded position reports *and* the per-station Progress Tracker, append
+   what's new to `observations.jsonl` and `station_events.jsonl`. Ingest is
+   **lossless**: everything parseable is stored; policy filtering happens
+   downstream.
 2. **Build** (`build_map.py`) — project all accumulated observations onto the
    official route line and render interactive speed maps.
 
@@ -51,18 +55,30 @@ Pipeline per run, for one route (`--route`, default `AcelaExpress`):
   "updated HH:MM on MM/DD" stamp, decrementing the date on >12 h clock jumps
   (`infer_year` picks the year that keeps everything in the past).
   `ROUTE_ALIASES` canonicalizes slugs where RailRat's train pages disagree
-  with its route index (e.g. `Keystone` → `KeystoneService`).
-- **Store** (`append_parsed`) — append to `data/observations.jsonl`, deduped
-  in-memory against the whole file on key
-  `train|ts|lat(4dp)|lon(4dp)`. Points above 170 mph are dropped as GPS
-  glitches. Raw page HTML is saved under `data/raw/<scrape-date>/` first.
+  with its route index (`Keystone` → `KeystoneService`, the 2020-era
+  `MichiganServices` → `WolverineMichiganService`).
+- **Station events** (`parse_station_entries`) — the page's Progress Tracker
+  lists per-station *actual* arrival/departure times and delay-vs-schedule
+  ("HFD, departed 08:14, 8 min. late, arrived 08:10"). Both markup eras are
+  parsed (current spans-and-est. style and the 2020 one-verb-per-row style);
+  "est." rows are predictions, not events, and are skipped. Dates are
+  assigned by the same backward clock-walk as positions, anchored at the
+  page's "updated" stamp.
+- **Store** (`append_parsed`, `append_station_events`) — append to
+  `data/observations.jsonl` (deduped on `train|ts|lat(4dp)|lon(4dp)`) and
+  `data/station_events.jsonl` (deduped on full event content; a station's
+  record gains fields across a run's page fetches and each variant is kept —
+  consumers merge by train/run/station). Nothing parseable is discarded:
+  even implausible speeds are stored, and filtered only at build time. Raw
+  page HTML is saved under `data/raw/<scrape-date>/` first.
 - **Wayback** (`--wayback`) — optional archive.org backfill. CDX snapshot
   lookups and snapshot bodies are cached under `data/raw/wayback/`; transient
   failures are *not* cached, so an aborted pass resumes cleanly. Aborts after
   3 consecutive CDX failures (archive.org rate-limiting).
-- **Reparse** (`--reparse`) — rebuild `observations.jsonl` from scratch from
-  `data/raw/**`, no network. This is the escape hatch that makes parser
-  changes safe: raw HTML is the source of truth; the JSONL is derived.
+- **Reparse** (`--reparse`) — rebuild both datasets from scratch from
+  whatever is under `data/raw/**`, no network. Useful for re-applying parser
+  improvements to pages still on disk, but no longer load-bearing: the JSONL
+  datasets are the source of truth, and raw/ is a disposable cache.
 
 ## build_map.py
 
@@ -84,7 +100,8 @@ Pipeline per run, for one route:
   span a section boundary.
 - **Projection** — `SegmentIndex`, a spatial hash over route segments
   (0.05° cells), assigns each observation to its nearest segment and thus its
-  bin. Observations >2 mi off-route are dropped (wrong route/GPS junk).
+  bin. `load_observations` drops GPS-glitch speeds (>170 mph) at load, and
+  observations >2 mi off-route are dropped (wrong route/GPS junk).
 - **Stats & render** — each bin records max mph (which train/when set it),
   point count, and median. **Max**, not mean, is the headline: station dwells
   and delays shouldn't mask what the track can do — slow bins are slow only
@@ -98,39 +115,42 @@ Pipeline per run, for one route:
 
 | Path | What | In git? |
 |---|---|---|
-| `data/observations.jsonl` | The dataset. One JSON object per position report: `route, train, run_date, ts, lat, lon, mph, heading, desc, src` (`src` = `live` or `wayback:<stamp>`). Append-only, deduped, safe to re-scrape. | yes |
+| `data/observations.jsonl` | Position reports. One JSON object each: `route, train, run_date, ts, lat, lon, mph, heading, desc, src` (`src` = `live` or `wayback:<stamp>`). Append-only, deduped, safe to re-scrape. | yes |
+| `data/station_events.jsonl` | Station timings. One JSON object each: `route, train, run_date, station, name, arr, arr_delay, dep, dep_delay, src` (times ISO, delays in minutes, late positive / early negative, null when the page didn't state one). Append-only; a station's record may appear in several progressively-more-complete variants per run. | yes |
 | `data/roster_<route>.json` | Known train numbers per route (sorted list). | yes |
 | `data/geometry/<route>.geojson` | Cached NTAD route geometry. Delete to re-fetch. | yes |
-| `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches; source of truth for `--reparse`. | no (bulky) — back up out-of-band, see below |
+| `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches. A disposable debug/reprocessing cache — delete freely. | no |
 | `out/` | Generated maps. | no (the Google one may embed an API key) |
+| `tests/fixtures/*.html` | A curated handful of raw pages, kept verbatim forever as the parser's ground truth. | yes |
 
 ### Storage & backup policy
 
-The observations are irreplaceable: RailRat serves only each train's latest
-run, overwriting the previous one, and no public archive of Amtrak GPS/speed
-history exists. A missed run is gone forever. The data therefore has three
-tiers:
+The datasets are irreplaceable: RailRat serves only each train's latest run,
+overwriting the previous one, and no deep public archive of Amtrak GPS/speed
+data exists. A missed run is gone forever. Everything of value therefore
+lives in the committed JSONL files, and **the git remote is the backup** —
+data commits alongside code commits are normal and expected.
 
-- **Gold — `observations.jsonl` + rosters.** Committed; the git remote *is*
-  the backup. Data commits alongside code commits are normal and expected.
-- **Source of truth — `data/raw/`.** Not in git (unbounded growth would
-  eventually make clones miserable). Back it up out-of-band: an occasional
-  archive (e.g. `tar czf raw-$(date +%F).tgz data/raw`) to a NAS/cloud drive.
-  Raw files are write-once, so occasional is genuinely enough. Losing raw/
-  keeps the distilled dataset but forfeits applying future parser fixes to
-  old pages.
-- **Reproducible — `data/geometry/` (re-fetchable from NTAD; committed for
-  offline convenience) and `out/` (regenerate anytime).**
+`data/raw/` needs no backup. Because ingest is lossless, the datasets
+capture everything the pages carry that we care about; raw pages are kept
+around only as a convenience for debugging and for re-running `--reparse`
+after parser improvements, and can be deleted at any time. The cost of a
+lost raw page is only that *future* parser fixes can't be applied to it
+retroactively — a risk consciously accepted and mitigated by the fixture
+tests instead of by hoarding HTML.
 
-The dataset stays **plain-text, append-only JSONL** — this is a decision, not
-an accident. Appends are crash-safe and idempotent, the file is greppable and
-reviewable in PRs, and git delta-compresses each scrape to roughly the cost
-of the new lines, which is what makes the gold tier's git-as-backup work.
+Everything else is reproducible: `data/geometry/` is re-fetchable from NTAD
+(committed for offline convenience), `out/` regenerates in seconds.
+
+The datasets stay **plain-text, append-only JSONL** — this is a decision,
+not an accident. Appends are crash-safe and idempotent, the files are
+greppable and reviewable in PRs, and git delta-compresses each scrape to
+roughly the cost of the new lines, which is what makes git-as-backup work.
 Binary formats (SQLite, parquet, …) are off the table not for dependency
 reasons but because they lose what matters: they defeat git delta compression
 (sabotaging git-as-backup), aren't greppable or PR-reviewable, and buy
-nothing at this scale (~10k points, read linearly once per build). If the
-file ever reaches ~50–100 MB, split it per-route or per-year before
+nothing at this scale (~73k points / 16 MB, read linearly once per build).
+If a file ever reaches ~50–100 MB, split it per-route or per-year before
 reconsidering.
 
 ## Invariants
@@ -141,8 +161,12 @@ change and belongs in this file:
 - **Right tool for the job.** Dependencies are welcome when they beat the
   stdlib alternative; stdlib wins ties, nothing more. Keep the dependency
   list intentional — every entry should pull real weight.
-- **`observations.jsonl` is derived; `data/raw/` is the source of truth.**
-  Any parser change must keep `--reparse` able to rebuild the dataset.
+- **The JSONL datasets are the source of truth, and ingest is lossless.**
+  Scrape-time never discards parsed data; plausibility and rendering policy
+  (the 170 mph GPS-glitch ceiling, the 2 mi off-route cut) are build-time
+  choices in `build_map.py`, where a wrong threshold is a rebuild away from
+  fixed. The parser earns this trust through fixture tests, not by keeping
+  raw HTML forever — `data/raw/` is a disposable cache.
 - **Scraping is idempotent** — dedup on `(train, ts, lat, lon)` makes re-runs
   always safe, any cadence.
 - **Politeness is non-negotiable**: throttles, backoff, honest User-Agent.
