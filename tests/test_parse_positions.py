@@ -78,3 +78,49 @@ def test_positions_crossing_midnight_get_dated_backward():
     parsed = sr.parse_train_page(page, now=dt.datetime(2026, 7, 22, 0, 20))
     assert [p["ts"] for p in parsed["points"]] == [
         "2026-07-22T00:05:00", "2026-07-21T23:50:00"]
+
+
+def test_points_dated_from_updated_stamp_not_newest_point_clock():
+    # Purpose: pin that position points are dated by walking back from the
+    # page's dated "updated HH:MM on MM/DD" stamp (as ARCHITECTURE.md
+    # describes), NOT from the newest point's bare clock. A report that
+    # arrived at 23:55 while the page didn't refresh until 00:12 the next
+    # day belongs to the PRIOR day. Anchoring at the newest point's own
+    # clock (23:55) with the update stamp's date (07/22) mis-dates every
+    # report a full day forward -- the root of run_date instability.
+    page = synth_page(
+        updated="0:12&nbsp;on&nbsp;7/22",
+        markers="\n".join([marker(23, 55, 45.1, -93.3, 79),
+                           marker(23, 50, 45.0, -93.2, 70),
+                           marker(23, 40, 44.9, -93.1, 60)]))
+    parsed = sr.parse_train_page(page, now=dt.datetime(2026, 7, 22, 0, 20))
+    assert [p["ts"] for p in parsed["points"]] == [
+        "2026-07-21T23:55:00", "2026-07-21T23:50:00", "2026-07-21T23:40:00"]
+    assert parsed["run_date"] == "2026-07-21"
+
+
+def test_run_date_is_stable_across_partial_and_full_snapshots():
+    # Purpose: the core regression. run_date must identify the physical run
+    # (its departure date) identically no matter which snapshot of the run is
+    # parsed. RailRat serves one accumulating run per train page, so an early
+    # scrape just after midnight (reports only from the prior evening) and a
+    # later scrape (whose points now span midnight) are the SAME run and must
+    # get the SAME run_date. Before the fix, the early snapshot mis-dates its
+    # pre-midnight reports forward and reports 2026-07-22, while the later,
+    # midnight-spanning snapshot reports 2026-07-21 -- so build_map groups one
+    # run under two (train, run_date) keys and double-counts it.
+    early = sr.parse_train_page(
+        synth_page(updated="0:20&nbsp;on&nbsp;7/22",
+                   markers="\n".join([marker(23, 55, 45.1, -93.3, 79),
+                                      marker(23, 50, 45.0, -93.2, 70),
+                                      marker(23, 40, 44.9, -93.1, 60)])),
+        now=dt.datetime(2026, 7, 22, 0, 25))
+    later = sr.parse_train_page(
+        synth_page(updated="8:00&nbsp;on&nbsp;7/22",
+                   markers="\n".join([marker(8, 0, 46.0, -94.0, 50),
+                                      marker(0, 10, 45.2, -93.4, 80),
+                                      marker(23, 55, 45.1, -93.3, 79),
+                                      marker(23, 50, 45.0, -93.2, 70),
+                                      marker(23, 40, 44.9, -93.1, 60)])),
+        now=dt.datetime(2026, 7, 22, 8, 5))
+    assert early["run_date"] == later["run_date"] == "2026-07-21"
