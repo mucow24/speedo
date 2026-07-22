@@ -4,3 +4,4 @@ data/raw/
 # generated maps; the google one may contain your Maps API key
 out/
 __pycache__/
+*.egg-info/
