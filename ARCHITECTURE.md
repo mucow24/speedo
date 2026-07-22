@@ -101,16 +101,46 @@ Pipeline per run, for one route:
 | `data/observations.jsonl` | The dataset. One JSON object per position report: `route, train, run_date, ts, lat, lon, mph, heading, desc, src` (`src` = `live` or `wayback:<stamp>`). Append-only, deduped, safe to re-scrape. | yes |
 | `data/roster_<route>.json` | Known train numbers per route (sorted list). | yes |
 | `data/geometry/<route>.geojson` | Cached NTAD route geometry. Delete to re-fetch. | yes |
-| `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches; source of truth for `--reparse`. | no (bulky) |
+| `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches; source of truth for `--reparse`. | no (bulky) — back up out-of-band, see below |
 | `out/` | Generated maps. | no (the Google one may embed an API key) |
+
+### Storage & backup policy
+
+The observations are irreplaceable: RailRat serves only each train's latest
+run, overwriting the previous one, and no public archive of Amtrak GPS/speed
+history exists. A missed run is gone forever. The data therefore has three
+tiers:
+
+- **Gold — `observations.jsonl` + rosters.** Committed; the git remote *is*
+  the backup. Data commits alongside code commits are normal and expected.
+- **Source of truth — `data/raw/`.** Not in git (unbounded growth would
+  eventually make clones miserable). Back it up out-of-band: an occasional
+  archive (e.g. `tar czf raw-$(date +%F).tgz data/raw`) to a NAS/cloud drive.
+  Raw files are write-once, so occasional is genuinely enough. Losing raw/
+  keeps the distilled dataset but forfeits applying future parser fixes to
+  old pages.
+- **Reproducible — `data/geometry/` (re-fetchable from NTAD; committed for
+  offline convenience) and `out/` (regenerate anytime).**
+
+The dataset stays **plain-text, append-only JSONL** — this is a decision, not
+an accident. Appends are crash-safe and idempotent, the file is greppable and
+reviewable in PRs, and git delta-compresses each scrape to roughly the cost
+of the new lines, which is what makes the gold tier's git-as-backup work.
+Binary formats (SQLite, parquet, …) are off the table not for dependency
+reasons but because they lose what matters: they defeat git delta compression
+(sabotaging git-as-backup), aren't greppable or PR-reviewable, and buy
+nothing at this scale (~10k points, read linearly once per build). If the
+file ever reaches ~50–100 MB, split it per-route or per-year before
+reconsidering.
 
 ## Invariants
 
 These are the load-bearing assumptions; breaking one is an architectural
 change and belongs in this file:
 
-- **stdlib only.** No pip installs, for the scripts *and* the tests
-  (see [TESTING.md](TESTING.md)).
+- **Right tool for the job.** Dependencies are welcome when they beat the
+  stdlib alternative; stdlib wins ties, nothing more. Keep the dependency
+  list intentional — every entry should pull real weight.
 - **`observations.jsonl` is derived; `data/raw/` is the source of truth.**
   Any parser change must keep `--reparse` able to rebuild the dataset.
 - **Scraping is idempotent** — dedup on `(train, ts, lat, lon)` makes re-runs
@@ -125,4 +155,4 @@ change and belongs in this file:
 ## Testing
 
 See [TESTING.md](TESTING.md). Tests live in `tests/`, run offline with
-`python -m unittest`, and use fixture HTML/geometry under `tests/fixtures/`.
+`pytest`, and use fixture HTML/geometry under `tests/fixtures/`.

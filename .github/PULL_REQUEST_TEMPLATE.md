@@ -10,5 +10,6 @@
 - [ ] Logic changes are covered by tests per [TESTING.md](../TESTING.md)
       (TDD where possible; red tests failed on the behavior under change;
       no tautological/purposeless tests).
-- [ ] `python -m unittest` passes offline.
-- [ ] No new dependencies (stdlib only).
+- [ ] `pytest` passes offline.
+- [ ] Any new dependency is the right tool for the job (stdlib preferred
+      only when options are equally good).

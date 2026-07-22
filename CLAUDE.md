@@ -14,8 +14,9 @@ Two stdlib-only Python scripts that map observed Amtrak speeds. Read
   must fail on the behavior being changed — "module failed to load" or "it
   didn't run" is not red. No tautological or purposeless tests; every test
   carries a comment stating what it pins and why.
-- **stdlib only.** No pip dependencies, in the scripts or the tests. Tests
-  run offline via `python -m unittest`.
+- **Right tool for the job.** Dependencies are welcome where they beat the
+  stdlib option; prefer stdlib only when the choices are equally good. Tests
+  run offline via `pytest`.
 - **Never weaken scraper politeness** (throttles, backoff, User-Agent).
 - `data/observations.jsonl` is derived data — parser changes must keep
   `--reparse` able to rebuild it from `data/raw/`.

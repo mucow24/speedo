@@ -74,10 +74,9 @@ Every test must earn its place:
 ## Mechanics
 
 - Tests live in `tests/`, named `test_*.py`.
-- **stdlib `unittest` only.** The project's no-dependency rule (README:
-  "stdlib only, no pip installs") extends to the test suite.
-  `python -m unittest` from the repo root must discover and run everything.
-  Running via pytest locally is fine; depending on it is not.
+- **pytest is the test runner** — plain asserts, fixtures, parametrize; the
+  right tool for the job. `pytest` from the repo root must discover and run
+  the whole suite.
 - Tests run **offline and fast**. No network, ever. Real RailRat HTML
   snippets, NTAD geometry fragments, etc. live as fixtures under
   `tests/fixtures/`.

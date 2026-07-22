@@ -11,7 +11,8 @@ JSONL file.
 
 ## Running it
 
-Requires Python 3.8+ and nothing else (stdlib only, no pip installs).
+Requires Python 3.8+. The scripts themselves currently have no third-party
+dependencies; running the tests needs `pytest`.
 
 ```sh
 # 1. Scrape the latest runs (safe to repeat; only new points are added)
