@@ -242,13 +242,19 @@ def parse_train_page(text, now):
             "heading": pm.group(5) or "",
         })
 
-    # Points are newest-first already; anchor at the newest point itself (the
-    # page updates when a report arrives, so it coincides with the stamp).
+    # Points are newest-first already; anchor the date-walk at the page's
+    # dated "updated HH:MM on MM/DD" stamp -- the only element carrying a real
+    # date. Usually the newest report and the update coincide, but when the
+    # newest report predates a post-midnight refresh (a 23:55 report on a page
+    # that didn't update until 00:12) its bare clock would otherwise be filed
+    # under the update's date, dating the whole run a day forward and making
+    # run_date flip between snapshots. Anchoring at the stamp keeps every
+    # snapshot's dates -- and thus run_date -- consistent.
     points = []
     if raw_pts:
         stamps = walk_dates_backward(
             [(p["hh"], p["mm"]) for p in raw_pts],
-            upd_date, raw_pts[0]["hh"] * 60 + raw_pts[0]["mm"])
+            upd_date, int(u.group(1)) * 60 + int(u.group(2)))
         points = [{
             "ts": ts, "lat": p["lat"], "lon": p["lon"],
             "mph": p["mph"], "heading": p["heading"], "desc": p["desc"],
@@ -272,6 +278,14 @@ def parse_train_page(text, now):
 
     if not points and not station_events:
         return None
+    # run_date identifies the physical run and must be the SAME for every
+    # snapshot of it, because build_map groups runs by (train, run_date) and
+    # two runs of a daily long-distance train overlap in wall-clock time --
+    # only the departure date separates them. RailRat serves the whole run's
+    # reports on one page, so the earliest report is the origin departure;
+    # with points now dated from the "updated" stamp (above) that earliest
+    # date is snapshot-independent. Taking the min over both points and
+    # station events keeps it stable even on a station-only page.
     run_date = min([p["ts"] for p in points] +
                    [t for e in station_events for t in (e["arr"], e["dep"]) if t])[:10]
     return {
