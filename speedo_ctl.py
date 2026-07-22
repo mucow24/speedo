@@ -107,7 +107,7 @@ def format_status_table(rows):
             "yes" if r["wayback"] else "no",
         ])
     widths = [max(len(row[i]) for row in table) for i in range(len(header))]
-    right = {1, 2, 3}  # numeric columns
+    right = {0, 1, 2, 3}  # route names + numeric columns; names read best flush
     return "\n".join(
         "  ".join(c.rjust(widths[i]) if i in right else c.ljust(widths[i])
                   for i, c in enumerate(row)).rstrip()

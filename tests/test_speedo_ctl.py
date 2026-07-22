@@ -93,6 +93,10 @@ def test_format_status_table_rows():
     text = ctl.format_status_table(rows)
     lines = text.splitlines()
     assert "Route" in lines[0] and "Coverage" in lines[0] and "Wayback" in lines[0]
+    # Route names are right-justified (header too), so every name ends flush
+    # two spaces left of the Points column instead of trailing ragged gaps.
+    assert lines[0].startswith("       Route  ")     # "Route" padded to "AcelaExpress"
+    assert lines[2].startswith("   Vermonter  ")
     acela = next(ln for ln in lines if "AcelaExpress" in ln)
     assert "41,203" in acela and "78.5%" in acela
     assert "2026-07-21 14:32" in acela and "yes" in acela
