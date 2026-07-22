@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Northeast Regional Train #125 Status - RailRat</title>
+    <meta name="description" content="Real-Time train status for Amtrak Northeast Regional Train #125 (unofficial).">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-139513258-1"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'UA-139513258-1');
+    </script>
+    <script type="text/javascript" language="JavaScript"><!--
+      function HideContent(d) {
+        document.getElementById(d).style.display = "none";
+      }
+      function ShowContent(d) {
+        document.getElementById(d).style.display = "block";
+      }
+      function ReverseDisplay(d) {
+        if(document.getElementById(d).style.display == "none") { document.getElementById(d).style.display = "block"; }
+        else { document.getElementById(d).style.display = "none"; }
+      }
+      function ToggleClass(className) {
+        elements = document.getElementsByClassName(className);
+        for (var i = 0; i < elements.length; i++) {
+          elements[i].style.display = elements[i].style.display == 'none' ? 'block' : 'none';
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="/leaflet.css"/>
+    <script src="/leaflet.js"></script>
+    <script>
+      var marker_blue_sm = new L.Icon({iconUrl:'/images/marker-blue-sm.png',shadowUrl:'/images/marker-shadow-sm.png',iconSize:[15,25],iconAnchor:[8,25],popupAnchor:[0,-26],shadowSize:[25,25]});
+      var marker_blue_med = new L.Icon({iconUrl:'/images/marker-blue-med.png',shadowUrl:'/images/marker-shadow-med.png',iconSize:[20,33],iconAnchor:[10,33],popupAnchor:[0,-34],shadowSize:[33,33]});
+      var marker_grey_red_sm = new L.Icon({iconUrl:'/images/marker-grey-red-sm.png',shadowUrl:'/images/marker-shadow-sm.png',iconSize:[15,25],iconAnchor:[8,25],popupAnchor:[0,-26],shadowSize:[25,25]});
+      var marker_grey_sm = new L.Icon({iconUrl:'/images/marker-grey-sm.png',shadowUrl:'/images/marker-shadow-sm.png',iconSize:[15,25],iconAnchor:[8,25],popupAnchor:[0,-26],shadowSize:[25,25]});
+      var marker_grey_yellow_sm = new L.Icon({iconUrl:'/images/marker-grey-yellow-sm.png',shadowUrl:'/images/marker-shadow-sm.png',iconSize:[15,25],iconAnchor:[8,25],popupAnchor:[0,-26],shadowSize:[25,25]});
+      var blueCircle = {radius:5,fillColor:'blue',color:'blue',weight:1,opacity:0.9,fillOpacity:0.6};
+      var greyCircle = {radius:5,fillColor:'grey',color:'grey',weight:1,opacity:0.9,fillOpacity:0.6};
+    </script>
+    <link rel="stylesheet" href="/normalize.css">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header id="top">
+      <div class="nav">
+        <a href="/"><img src="/rrp64.gif" height=64 width=32></a>
+        <a href="/"><h2>RailRat.net</h2></a>
+        <ul>
+          <li><a href="/index.shtml">Home</a></li>
+          <li><a href="/routes/">Routes</a></a>
+          <li><a href="/stations/">Stations</a></li>
+          <li><a class="active" href="/trains/">Trains</a></li>
+          <li class="dropdown" style="float:right">
+            <a href="javascript:ReverseDisplay('hamburger')" class="dropbtn">&#9776;</a>
+            <div class="dropdown-content" id="hamburger" style="display:none;">
+              <a href="/">Home</a>
+              <a href="/routes/">Routes</a>
+              <a href="/stations/">Stations</a>
+              <a href="/trains/">Trains</a>
+              <hr>
+              <a href="/links.shtml">Rail Links</a>
+              <a href="/about.shtml">About</a>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </header>
+    <main>
+
+      <div id="train_heading">
+        <h1><a href="/routes/NortheastRegional/">Northeast Regional</a> Train 125</h1>
+        <p>Latest status for Northeast Regional&nbsp;Train #125, updated 20:13&nbsp;on&nbsp;09/25 (unofficial).         
+      </div>
+
+      <div id="train_status">
+        <h2 id="1">Status</h2>
+        <ul>
+          <li>Orig.: New York, NY - Penn Station</li>
+          <li>Dest.: Newport News, VA</li>
+          <li>Sch.: 11:35 ET 09/25</li>
+          <li>Status: Completed</li>
+          <ul>
+          </ul>
+        </ul>
+      </div>
+
+      <div id="train_progress">
+        <h2>Progress</h2>
+        <ol>
+          <li><a href="/stations/NYP/" title="New York, NY - Penn Station">NYP</a>, <b>departed</b> 11:35 ET, on time.
+          <li><a href="/stations/NWK/" title="Newark, NJ - Penn Station">NWK</a>, <b>departed</b> 11:52 ET, on time.
+          <li><a href="/stations/MET/" title="Metropark, NJ">MET</a>, <b>departed</b> 12:06 ET, on time.
+          <li><a href="/stations/TRE/" title="Trenton, NJ">TRE</a>, <b>departed</b> 12:30 ET, on time.
+          <li><a href="/stations/PHL/" title="Philadelphia, PA - 30th Street Station">PHL</a>, <b>departed</b> 13:05 ET, on time.
+          <li><a href="/stations/WIL/" title="Wilmington, DE">WIL</a>, <b>departed</b> 13:28 ET, 1 min. late.
+          <li><a href="/stations/BAL/" title="Baltimore, MD - Penn Station">BAL</a>, <b>departed</b> 14:25 ET, on time.
+          <li><a href="/stations/BWI/" title="Baltimore, MD - BWI Thurgood Marshall Airport">BWI</a>, <b>departed</b> 14:40 ET, on time.
+          <li><a href="/stations/NCR/" title="New Carrollton, MD">NCR</a>, <b>departed</b> 14:54 ET, on time.
+          <li><a href="/stations/WAS/" title="Washington, DC - Union Station">WAS</a>, <b>departed</b> 15:55 ET, on time.
+          <li><a href="/stations/ALX/" title="Alexandria, VA">ALX</a>, <b>departed</b> 16:17 ET, 3 min. late.
+          <li><a href="/stations/WDB/" title="Woodbridge, VA">WDB</a>, <b>departed</b> 16:37 ET, 5 min. late.
+          <li><a href="/stations/QAN/" title="Quantico, VA">QAN</a>, <b>departed</b> 16:49 ET, 4 min. late.
+          <li><a href="/stations/FBG/" title="Fredericksburg, VA">FBG</a>, <b>departed</b> 17:13 ET, 1 min. late.
+          <li><a href="/stations/ASD/" title="Ashland, VA">ASD</a>, <b>departed</b> 18:01 ET, 7 min. late.
+          <li><a href="/stations/RVR/" title="Richmond, VA - Staples Mill Road Station">RVR</a>, <b>departed</b> 18:28 ET, on time.
+          <li><a href="/stations/RVM/" title="Richmond, VA - Main Street Station">RVM</a>, <b>departed</b> 18:57 ET, on time.
+          <li><a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>, <b>arrived</b> 19:45 ET, 4 min. early.
+          <li><a href="/stations/NPN/" title="Newport News, VA">NPN</a>, <b>completed</b>, 20:17 ET.
+        </ol>
+      </div>
+
+      <div id="train_position_updates;">
+        <h2>Position Updates</h2>
+        <ul>
+          <li>20:13 - 0 mi NW of Newport News [<a href="/stations/NPN/" title="Newport News, VA">NPN</a>], 15&nbsp;mph&nbsp;SE</li>
+          <li>20:04 - 11 mi NW of Newport News [<a href="/stations/NPN/" title="Newport News, VA">NPN</a>], 78&nbsp;mph&nbsp;S</li>
+          <li>19:57 - 19 mi NW of Newport News [<a href="/stations/NPN/" title="Newport News, VA">NPN</a>], 68&nbsp;mph&nbsp;S</li>
+          <li>19:51 - 22 mi NW of Newport News [<a href="/stations/NPN/" title="Newport News, VA">NPN</a>], 1&nbsp;mph&nbsp;E</li>
+          <li>19:49 - 22 mi NW of Newport News [<a href="/stations/NPN/" title="Newport News, VA">NPN</a>], 0&nbsp;mph</li>
+          <li>19:43 - 5 mi NW of Williamsburg [<a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>], 40&nbsp;mph&nbsp;S</li>
+          <li>19:39 - 9 mi NW of Williamsburg [<a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>], 65&nbsp;mph&nbsp;S</li>
+          <li>19:33 - 13 mi NW of Williamsburg [<a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>], 58&nbsp;mph&nbsp;SE</li>
+          <li>19:28 - 17 mi NW of Williamsburg [<a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>], 78&nbsp;mph&nbsp;S</li>
+          <li>19:25 - 21 mi NW of Williamsburg [<a href="/stations/WBG/" title="Williamsburg, VA">WBG</a>], 79&nbsp;mph&nbsp;S</li>
+        </ul>
+      </div>
+
+      <div id="train_map">
+        <h2>Amtrak 125 Status Map</h2>
+        <div id="mapid1" style="width: 320px; height: 320px;"></div>
+        <script>
+          var mymap = L.map('mapid1',{dragging: !L.Browser.mobile,tap: !L.Browser.mobile,zoomSnap: 0.1}).setView([37.026482, -76.454002], 9);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18,attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>',id: 'mapbox/streets-v11'}).addTo(mymap);
+          L.marker([40.750327,-73.994459],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>New York, NY [NYP]</b><br>&nbsp;<b>Penn Station</b><br>&nbsp;Departed 11:35 ET<br>&nbsp;On time");
+          L.marker([40.734706,-74.164750],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Newark, NJ [NWK]</b><br>&nbsp;<b>Penn Station</b><br>&nbsp;Departed 11:52 ET<br>&nbsp;On time");
+          L.marker([40.568056,-74.329583],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Metropark, NJ [MET]</b><br>&nbsp;Departed 12:06 ET<br>&nbsp;On time");
+          L.marker([40.219011,-74.754440],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Trenton, NJ [TRE]</b><br>&nbsp;Departed 12:30 ET<br>&nbsp;On time");
+          L.marker([39.955615,-75.181041],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Philadelphia, PA [PHL]</b><br>&nbsp;<b>30th Street Station</b><br>&nbsp;Departed 13:05 ET<br>&nbsp;On time");
+          L.marker([39.737263,-75.551095],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Wilmington, DE [WIL]</b><br>&nbsp;Departed 13:28 ET<br>&nbsp;1 min. late");
+          L.marker([39.307302,-76.615688],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Baltimore, MD [BAL]</b><br>&nbsp;<b>Penn Station</b><br>&nbsp;Departed 14:25 ET<br>&nbsp;On time");
+          L.marker([39.192362,-76.694300],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Baltimore, MD [BWI]</b><br>&nbsp;<b>BWI Thurgood Marshall Airport</b><br>&nbsp;Departed 14:40 ET<br>&nbsp;On time");
+          L.marker([38.948098,-76.871494],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>New Carrollton, MD [NCR]</b><br>&nbsp;Departed 14:54 ET<br>&nbsp;On time");
+          L.marker([38.896993,-77.006422],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Washington, DC [WAS]</b><br>&nbsp;<b>Union Station</b><br>&nbsp;Departed 15:55 ET<br>&nbsp;On time");
+          L.marker([38.806503,-77.062330],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Alexandria, VA [ALX]</b><br>&nbsp;Departed 16:17 ET<br>&nbsp;3 min. late");
+          L.marker([38.658915,-77.247852],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Woodbridge, VA [WDB]</b><br>&nbsp;Departed 16:37 ET<br>&nbsp;5 min. late");
+          L.marker([38.521882,-77.293027],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Quantico, VA [QAN]</b><br>&nbsp;Departed 16:49 ET<br>&nbsp;4 min. late");
+          L.marker([38.298413,-77.457203],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Fredericksburg, VA [FBG]</b><br>&nbsp;Departed 17:13 ET<br>&nbsp;1 min. late");
+          L.marker([37.759596,-77.481304],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Ashland, VA [ASD]</b><br>&nbsp;Departed 18:01 ET<br>&nbsp;7 min. late");
+          L.marker([37.617693,-77.496943],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Richmond, VA [RVR]</b><br>&nbsp;<b>Staples Mill Road Station</b><br>&nbsp;Departed 18:28 ET<br>&nbsp;On time");
+          L.marker([37.534209,-77.429512],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Richmond, VA [RVM]</b><br>&nbsp;<b>Main Street Station</b><br>&nbsp;Departed 18:57 ET<br>&nbsp;On time");
+          L.marker([37.276414,-76.708564],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Williamsburg, VA [WBG]</b><br>&nbsp;Arrived 19:45 ET<br>&nbsp;4 min. early");
+          L.marker([37.022731,-76.451970],{icon:marker_grey_sm}).addTo(mymap).bindPopup("<b>Newport News, VA [NPN]</b><br>&nbsp;Completed");
+          L.marker([37.026482,-76.454002],{icon:marker_blue_med,zIndexOffset:1000}).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>20:13 0 mi NW of NPN, 15&nbsp;mph&nbsp;SE</small>").openPopup();
+          L.circleMarker([37.165359,-76.550293],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>20:04 11 mi NW of NPN, 78&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.245560,-76.654480],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:57 19 mi NW of NPN, 68&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.276321,-76.707169],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:51 22 mi NW of NPN, 1&nbsp;mph&nbsp;E</small>");
+          L.circleMarker([37.276600,-76.708237],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:49 22 mi NW of NPN, 0&nbsp;mph</small>");
+          L.circleMarker([37.345310,-76.756920],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:43 5 mi NW of WBG, 40&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.383450,-76.803757],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:39 9 mi NW of WBG, 65&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.401081,-76.885933],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:33 13 mi NW of WBG, 58&nbsp;mph&nbsp;SE</small>");
+          L.circleMarker([37.425461,-76.969223],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:28 17 mi NW of WBG, 78&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.441090,-77.041481],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:25 21 mi NW of WBG, 79&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.480080,-77.183632],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:19 29 mi NW of WBG, 78&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.489559,-77.301361],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:12 35 mi NW of WBG, 29&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.508869,-77.402122],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:06 41 mi NW of WBG, 39&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.525200,-77.418808],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>19:03 42 mi NW of WBG, 29&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.534840,-77.428574],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:55 43 mi NW of WBG, 0&nbsp;mph</small>");
+          L.circleMarker([37.542641,-77.425377],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:48 0 mi N of RVM, 16&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.559181,-77.451859],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:42 2 mi NW of RVM, 32&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.584961,-77.478737],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:36 4 mi NW of RVM, 31&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.616070,-77.495720],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:34 6 mi NW of RVM, 2&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.616879,-77.496101],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:27 6 mi NW of RVM, 0&nbsp;mph</small>");
+          L.circleMarker([37.621750,-77.498268],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:22 0 mi N of RVR, 14&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.631432,-77.502670],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:19 0 mi N of RVR, 18&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.716740,-77.494308],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:10 6 mi N of RVR, 43&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.740891,-77.486847],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:07 8 mi N of RVR, 36&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.758770,-77.481323],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>18:04 9 mi N of RVR, 0&nbsp;mph</small>");
+          L.circleMarker([37.826080,-77.460037],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:57 4 mi N of ASD, 64&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.895569,-77.464058],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:51 9 mi N of ASD, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.930500,-77.450867],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:49 11 mi N of ASD, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([37.979309,-77.363388],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:42 16 mi NE of ASD, 58&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.033230,-77.375977],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:36 19 mi N of ASD, 41&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.069309,-77.378151],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:34 22 mi N of ASD, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.210350,-77.437141],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:25 31 mi N of ASD, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.292568,-77.461143],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:18 36 mi N of ASD, 38&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.346359,-77.442436],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:10 3 mi N of FBG, 46&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.356991,-77.407997],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:06 4 mi NE of FBG, 71&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.403461,-77.365242],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>17:02 8 mi NE of FBG, 68&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.467651,-77.322998],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:57 13 mi NE of FBG, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.521111,-77.293716],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:52 17 mi NE of FBG, 0&nbsp;mph</small>");
+          L.circleMarker([38.576889,-77.265190],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:47 4 mi N of QAN, 69&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.658249,-77.248657],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:42 9 mi N of QAN, 1&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([38.670010,-77.236420],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:36 0 mi NE of WDB, 68&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([38.758709,-77.175537],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:31 7 mi NE of WDB, 70&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.794312,-77.152260],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:27 10 mi NE of WDB, 71&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.805660,-77.063469],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:22 14 mi NE of WDB, 0&nbsp;mph</small>");
+          L.circleMarker([38.828999,-77.047020],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:16 1 mi NE of ALX, 38&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.850029,-77.049629],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:12 3 mi N of ALX, 33&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.876289,-77.037140],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:09 5 mi N of ALX, 38&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([38.896011,-77.004761],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>16:04 6 mi NE of ALX, 12&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([38.899181,-77.004852],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:54 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899181,-77.004860],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:50 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899189,-77.004852],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:45 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899200,-77.004868],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:42 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899189,-77.004890],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:35 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899189,-77.004883],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:25 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899200,-77.004883],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:15 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.899181,-77.004860],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:08 7 mi NE of ALX, 0&nbsp;mph</small>");
+          L.circleMarker([38.916809,-76.940163],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>15:02 10 mi NE of ALX, 121&nbsp;mph&nbsp;W</small>");
+          L.circleMarker([38.947491,-76.873062],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:58 7 mi NE of WAS, 0&nbsp;mph</small>");
+          L.circleMarker([38.960419,-76.862083],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:55 8 mi NE of WAS, 84&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([39.129131,-76.696350],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:48 15 mi NE of NCR, 117&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.191448,-76.694283],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:43 19 mi NE of NCR, 0&nbsp;mph</small>");
+          L.circleMarker([39.285339,-76.667778],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:36 25 mi NE of NCR, 79&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.309368,-76.627113],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:33 8 mi NE of BWI, 26&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.307461,-76.614800],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:26 9 mi NE of BWI, 0&nbsp;mph</small>");
+          L.circleMarker([39.307449,-76.614723],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:23 9 mi NE of BWI, 0&nbsp;mph</small>");
+          L.circleMarker([39.307999,-76.615883],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:18 9 mi NE of BWI, 0&nbsp;mph</small>");
+          L.circleMarker([39.302570,-76.577911],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:12 2 mi E of BAL, 54&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.328388,-76.460854],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:07 8 mi E of BAL, 108&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.409660,-76.307693],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>14:02 17 mi NE of BAL, 122&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.509811,-76.162216],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:56 27 mi NE of BAL, 96&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.561550,-76.061462],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:51 34 mi NE of BAL, 108&nbsp;mph&nbsp;W</small>");
+          L.circleMarker([39.590450,-75.961433],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:48 40 mi NE of BAL, 115&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.647919,-75.788742],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:41 49 mi NE of BAL, 118&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([39.705460,-75.646172],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:37 58 mi NE of BAL, 107&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.737679,-75.552628],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:33 63 mi NE of BAL, 0&nbsp;mph</small>");
+          L.circleMarker([39.741371,-75.533974],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:26 64 mi NE of BAL, 39&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([39.813122,-75.437363],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:22 7 mi NE of WIL, 107&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([39.863239,-75.336311],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:19 14 mi NE of WIL, 108&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.944969,-75.200722],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:12 23 mi NE of WIL, 66&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([39.954971,-75.181580],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>13:03 24 mi NE of WIL, 0&nbsp;mph</small>");
+          L.circleMarker([39.973438,-75.198021],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:58 24 mi NE of WIL, 28&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.004299,-75.119217],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:52 4 mi NE of PHL, 78&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.013100,-75.060463],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:48 7 mi NE of PHL, 107&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.133289,-74.824913],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:41 22 mi NE of PHL, 106&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([40.208241,-74.767097],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:36 27 mi NE of PHL, 76&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([40.218399,-74.754150],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:34 28 mi NE of PHL, 0&nbsp;mph</small>");
+          L.circleMarker([40.309101,-74.632942],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:26 37 mi NE of PHL, 121&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.406239,-74.519623],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:21 17 mi NE of TRE, 122&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.507092,-74.432800],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:16 26 mi NE of TRE, 122&nbsp;mph&nbsp;SW</small>");
+          L.circleMarker([40.557041,-74.342133],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:13 31 mi NE of TRE, 73&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.594929,-74.289711],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:07 35 mi NE of TRE, 108&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.654881,-74.225082],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>12:03 8 mi NE of MET, 76&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.733730,-74.165100],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>11:58 14 mi NE of MET, 0&nbsp;mph</small>");
+          L.circleMarker([40.746021,-74.116982],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>11:52 16 mi NE of MET, 43&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.765678,-74.066223],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>11:48 5 mi NE of NWK, 69&nbsp;mph&nbsp;S</small>");
+          L.circleMarker([40.748909,-73.995842],blueCircle).addTo(mymap).bindPopup("<b>Northeast Regional 125</b><small><br>11:38 8 mi E of NWK, 0&nbsp;mph</small>");
+        </script>
+      </div>
+
+      <div id="train_external_links">
+        <h2>External Links</h2>
+        <ul>
+          <li>Recent <a href="https://juckins.net/amtrak_status/archive/html/history.php?train_num=125&station=&date_start=09%2F23%2F2020&date_end=09%2F26%2F2020&df1=1&df2=1&df3=1&df4=1&df5=1&df6=1&df7=1&sort=schDp&sort_dir=DESC&co=gt&limit_mins=&dfon=1" target="blank">Amtrak Status Maps Archive (ASMAD)</a> train history.</li>
+          <li><a href="https://asm.transitdocs.com/map?train=125&day=25&rr=A" target="_blank">Live Map </a> from North America Intercity Rail Tools.</li>
+        </ul>
+      </div>
+
+      <p><small>Last updated Saturday, 26-Sep-2020 10:56:10 PDT</small></p>
+    </main>
+    <footer>
+      <p><small>Train status is sourced from Amtrak's excellent
+        <a href="https://www.amtrak.com/track-your-train.html" target="_blank">Track Your Train Map</a>,
+        which should be considered the authoritative source for train information.  This
+        site is not affiliated with Amtrak, and no guarantees are made as to accuracy,
+        timeliness or completeness of the data shown.  Please use at your own risk.</small></p>
+    </footer>
+  </body>
+</html>
