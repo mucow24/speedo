@@ -48,3 +48,26 @@ def test_both_entry_points_share_one_alias_table():
     # through the SAME ROUTE_ALIASES object, so the scraper and the builder
     # can't drift into disagreeing about what "Keystone" means.
     assert bm.ROUTE_ALIASES is sr.ROUTE_ALIASES
+
+
+def test_every_route_key_is_already_canonical():
+    # Purpose: every ROUTES key must be a canonical slug -- i.e. round-trip
+    # through canonical_route to itself. A key that doesn't (a spaced display
+    # name, or an alias source like "Keystone") would fetch NTAD geometry into
+    # a parallel cache file and match zero observations, the exact bug
+    # canonical_route exists to prevent. This guards every entry, so a
+    # malformed newly-added route fails here instead of silently at build time.
+    for slug in bm.ROUTES:
+        assert bm.canonical_route(slug) == slug, slug
+
+
+def test_every_route_entry_is_well_formed():
+    # Purpose: pin the shape each ROUTES entry must have so a malformed addition
+    # fails fast offline rather than at NTAD-fetch or render time -- a non-empty
+    # NTAD feature name, a non-empty display name, and a plausible (lat, lon)
+    # mile0 pair (the endpoint stitch() orients each section from).
+    for slug, cfg in bm.ROUTES.items():
+        assert isinstance(cfg["ntad"], str) and cfg["ntad"].strip(), slug
+        assert isinstance(cfg["display"], str) and cfg["display"].strip(), slug
+        lat, lon = cfg["mile0"]
+        assert -90 <= lat <= 90 and -180 <= lon <= 180, slug

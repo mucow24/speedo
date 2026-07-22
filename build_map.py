@@ -61,6 +61,62 @@ ROUTES = {
                       "mile0": (41.87879, -87.63937)},         # Chicago Union
     "SouthwestChief": {"ntad": "Southwest Chief", "display": "Southwest Chief",
                        "mile0": (41.87879, -87.63937)},        # Chicago Union
+    # --- Added from the RailRat x NTAD geometry audit: routes RailRat serves
+    # that also have NTAD geometry. mile0 is the timetable-origin terminal (the
+    # end popup mile markers count up from). Two non-obvious cases: Adirondack
+    # counts up from Montreal (Amtrak's own mile column reads 0 at Montreal to
+    # 381 at NYP), and TexasEagle's Chicago-San Antonio spine is a separate
+    # NTAD section, so mile 0 falls at San Antonio on the longest (SAS-LAX)
+    # section. Piedmont rides Carolinian's Raleigh-Charlotte track (one line).
+    "Adirondack": {"ntad": "Adirondack", "display": "Adirondack",
+                   "mile0": (45.50018, -73.56662)},  # Montreal
+    "Borealis": {"ntad": "Borealis", "display": "Borealis",
+                 "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "CaliforniaZephyr": {"ntad": "California Zephyr", "display": "California Zephyr",
+                         "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "CapitolCorridor": {"ntad": "Capitol Corridor", "display": "Capitol Corridor",
+                        "mile0": (38.90299, -121.08312)},  # Auburn CA
+    "Cardinal": {"ntad": "Cardinal", "display": "Cardinal",
+                 "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "CityofNewOrleans": {"ntad": "City Of New Orleans", "display": "City of New Orleans",
+                         "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "CoastStarlight": {"ntad": "Coast Starlight", "display": "Coast Starlight",
+                       "mile0": (47.59848, -122.32928)},  # Seattle King St
+    "Crescent": {"ntad": "Crescent", "display": "Crescent",
+                 "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "Floridian": {"ntad": "Floridian", "display": "Floridian",
+                  "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "HeartlandFlyer": {"ntad": "Heartland Flyer", "display": "Heartland Flyer",
+                       "mile0": (32.75267, -97.32507)},  # Fort Worth
+    "Hiawatha": {"ntad": "Hiawatha Service", "display": "Hiawatha",
+                 "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "LakeShoreLimited": {"ntad": "Lake Shore Limited", "display": "Lake Shore Limited",
+                         "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "MapleLeaf": {"ntad": "Maple Leaf", "display": "Maple Leaf",
+                  "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "MissouriRiverRunner": {"ntad": "Missouri River Runner", "display": "Missouri River Runner",
+                            "mile0": (38.62306, -90.20333)},  # St. Louis
+    "Palmetto": {"ntad": "Palmetto", "display": "Palmetto",
+                 "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "Pennsylvanian": {"ntad": "Pennsylvanian", "display": "Pennsylvanian",
+                      "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "SilverMeteor": {"ntad": "Silver Meteor", "display": "Silver Meteor",
+                     "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "SunsetLimited": {"ntad": "Sunset Limited", "display": "Sunset Limited",
+                      "mile0": (29.96012, -90.09668)},  # New Orleans
+    "TexasEagle": {"ntad": "Texas Eagle", "display": "Texas Eagle",
+                   "mile0": (29.43517, -98.44361)},  # San Antonio
+    "BlueWaterMichiganService": {"ntad": "Blue Water", "display": "Blue Water (Michigan Service)",
+                                 "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "SalukiIllinoisService": {"ntad": "Saluki", "display": "Saluki (Illinois Service)",
+                              "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "LincolnServiceIllinoisService": {"ntad": "Lincoln Service", "display": "Lincoln Service",
+                                      "mile0": (41.87879, -87.63937)},  # Chicago Union
+    "CarolinianPiedmont": {"ntad": "Carolinian", "display": "Carolinian / Piedmont",
+                           "mile0": (40.75057, -73.99352)},  # NYC Penn
+    "LincolnServiceMissouriRiverRunner": {"ntad": "Lincol Service Missouri River Runner",
+                                          "display": "Lincoln Service / Missouri River Runner",
+                                          "mile0": (41.87879, -87.63937)},  # Chicago Union
 }
 
 
