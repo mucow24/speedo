@@ -25,6 +25,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from scrape_railrat import ROUTE_ALIASES  # the one canonicalizer, shared across entry points
+
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 OUT = HERE / "out"
@@ -60,6 +62,27 @@ ROUTES = {
     "SouthwestChief": {"ntad": "Southwest Chief", "display": "Southwest Chief",
                        "mile0": (41.87879, -87.63937)},        # Chicago Union
 }
+
+
+def canonical_route(route):
+    """Resolve a --route argument to its canonical RailRat slug.
+
+    Route identity is the RailRat slug. Normalize spacing (so the display
+    name "Empire Builder" collapses to the slug "EmpireBuilder") and apply
+    ROUTE_ALIASES (so "Keystone" -> "KeystoneService"), then require the
+    result to be a known ROUTES key. Without this, a spaced or aliased name
+    fell through ROUTES.get()'s default and fetched NTAD geometry into a
+    parallel, non-canonical cache file -- a silent byte-for-byte duplicate --
+    while matching zero observations, which are stored under the slug.
+    """
+    slug = "".join(route.split())
+    slug = ROUTE_ALIASES.get(slug, slug)
+    if slug not in ROUTES:
+        known = ", ".join(sorted(ROUTES))
+        raise SystemExit(f"unknown route {route!r} (resolved to {slug!r}); "
+                         f"known routes: {known}")
+    return slug
+
 
 BIN_MILES = 0.5
 OFFROUTE_MILES = 2.0     # drop observations farther than this from the line
@@ -97,8 +120,13 @@ def project_to_segment(p, a, b):
 
 
 def fetch_route_geometry(route):
-    """Download (and cache) the NTAD line for the route as a list of parts."""
-    cfg = ROUTES.get(route, {"ntad": route, "display": route, "mile0": None})
+    """Download (and cache) the NTAD line for the route as a list of parts.
+
+    `route` must already be a canonical slug (see `canonical_route`); callers
+    funnel through `build`, which canonicalizes before anything touches the
+    per-route cache filename.
+    """
+    cfg = ROUTES[route]
     gdir = DATA / "geometry"
     gdir.mkdir(parents=True, exist_ok=True)
     cache = gdir / f"{route}.geojson"
@@ -343,6 +371,7 @@ def short_ts(ts):
 
 
 def build(route, engines, google_key):
+    route = canonical_route(route)  # every entry point resolves to the one canonical slug
     parts, cfg = fetch_route_geometry(route)
     sections = stitch(parts, cfg.get("mile0"))
     raw_verts = sum(len(c) for c in sections)
