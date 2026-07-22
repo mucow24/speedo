@@ -132,9 +132,12 @@ Pipeline per run, for one route:
   outliers-hidden where different). Neither crosses a section boundary. The
   raw stats always ship too; the toggles are pure display.
 - **Render** — everything is serialized into one JSON `CFG` blob and
-  substituted into two inline HTML templates: Leaflet/OSM
+  substituted into two inline HTML templates: Leaflet
   (`speed_map_<route>.html`, works as-is) and Google Maps
-  (`speed_map_<route>_google.html`, needs an API key). Bins with no data
+  (`speed_map_<route>_google.html`, needs an API key). The Leaflet map draws
+  on CARTO Dark Matter tiles (dark basemap over OSM data, no API key) to match
+  the dark UI chrome; the Google map keeps Google's default styling. Bins with
+  no data
   draw gray dashed; interpolated bins draw color-dashed and their popups say
   "interpolated". The legend hosts the toggles: hide outliers (default on),
   interpolate gaps (default on), and a max-gap slider (1–100 bins, active
