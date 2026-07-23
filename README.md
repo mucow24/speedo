@@ -60,7 +60,7 @@ python speedo_ctl.py                                 # per-route status table
 python speedo_ctl.py --live-update Keystone Vermonter  # queued live scrapes
 python speedo_ctl.py --full-update AcelaExpress      # live + wayback backfill
 python speedo_ctl.py --make-map Vermonter            # build one route's maps
-python speedo_ctl.py --make-all-maps                 # build every route with data
+python speedo_ctl.py --make-map all                  # build every route with data
 ```
 
 Notes:

@@ -186,11 +186,16 @@ for speedo_ctl iff its cached NTAD geometry file does.
   route's live scrape first (fast, freshest data), then the slow wayback
   passes; a wayback abort (archive.org rate-limiting) cancels the remaining
   queued wayback jobs.
-- **Maps** (`--make-map`, `--make-all-maps`) — `build_map.build` per route,
-  skipping routes with no usable observations or no `ROUTES` entry.
+- **Maps** (`--make-map`) — `build_map.build` per route, skipping routes
+  with no usable observations or no `ROUTES` entry (`--make-map all` builds
+  the whole cache).
 
 CLI route arguments are canonicalized through `canonical_route` and
-deduped, keeping the "canonicalize at every entry point" invariant.
+deduped, keeping the "canonicalize at every entry point" invariant. The
+literal token `all` (accepted anywhere a route list is — `--live-update`,
+`--full-update`, `--make-map`) expands to every discovered route instead;
+it's intercepted before canonicalization, since `canonical_route` would
+reject it as an unknown route.
 
 ## Data layout
 
