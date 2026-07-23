@@ -112,6 +112,19 @@ def test_normalize_routes_canonicalizes_and_dedupes():
     assert got == ["KeystoneService", "EmpireBuilder"]
 
 
+def test_normalize_routes_expands_all_token(tmp_path):
+    # Purpose: the literal token `all` (case-insensitive) expands to every
+    # route discovered under the geometry folder, so `--full-update all`
+    # fans the update out across the whole cache without naming each slug.
+    # `all` wins over any routes listed alongside it (still "all").
+    (tmp_path / "AcelaExpress.geojson").write_text("{}", encoding="utf-8")
+    (tmp_path / "Vermonter.geojson").write_text("{}", encoding="utf-8")
+    assert ctl.normalize_routes(["all"], tmp_path) == ["AcelaExpress", "Vermonter"]
+    assert ctl.normalize_routes(["ALL"], tmp_path) == ["AcelaExpress", "Vermonter"]
+    assert ctl.normalize_routes(["Vermonter", "all"], tmp_path) == \
+        ["AcelaExpress", "Vermonter"]
+
+
 def test_plan_jobs_orders_live_before_wayback():
     # Purpose: a full update front-loads every fast live scrape before any
     # slow wayback pass, so fresh data lands early even if archive.org

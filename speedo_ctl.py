@@ -11,8 +11,13 @@ Usage:
     python speedo_ctl.py                              # status table
     python speedo_ctl.py --live-update RouteA RouteB  # queued live scrapes
     python speedo_ctl.py --full-update RouteA RouteB  # live + wayback backfill
+    python speedo_ctl.py --full-update all            # ...for every route on disk
     python speedo_ctl.py --make-map RouteA RouteB     # build maps for routes
-    python speedo_ctl.py --make-all-maps              # build every route with data
+    python speedo_ctl.py --make-map all               # build every route with data
+
+The literal token ``all`` stands in for every route discovered under
+data/geometry/, and works anywhere a route list is accepted (--live-update,
+--full-update, --make-map).
 """
 
 import argparse
@@ -114,8 +119,17 @@ def format_status_table(rows):
         for row in table)
 
 
-def normalize_routes(names):
-    """Canonicalize CLI route args and drop repeats, preserving order."""
+def normalize_routes(names, geom_dir=GEOMETRY):
+    """Canonicalize CLI route args and drop repeats, preserving order.
+
+    The literal token ``all`` (case-insensitive) expands to every route
+    discovered under the geometry folder, so ``--full-update all`` fans the
+    command out across the whole cache without naming each slug. ``all``
+    must be intercepted here: ``canonical_route`` would reject it as an
+    unknown route. It wins over any slugs listed beside it.
+    """
+    if any(n.lower() == "all" for n in names):
+        return discover_routes(geom_dir)
     out = []
     for n in names:
         slug = canonical_route(n)
@@ -206,15 +220,16 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--full-update", nargs="+", metavar="ROUTE",
-                   help="queue a live scrape, then a wayback backfill, for each route")
+                   help="queue a live scrape, then a wayback backfill, for each "
+                        "route ('all' = every route under data/geometry/)")
     g.add_argument("--live-update", nargs="+", metavar="ROUTE",
-                   help="queue a live scrape for each route")
+                   help="queue a live scrape for each route "
+                        "('all' = every route under data/geometry/)")
     g.add_argument("--make-map", nargs="+", metavar="ROUTE",
-                   help="build the speed map(s) for the given routes")
-    g.add_argument("--make-all-maps", action="store_true",
-                   help="build speed maps for every route with data")
+                   help="build the speed map(s) for the given routes "
+                        "('all' = every route under data/geometry/)")
     ap.add_argument("--engine", default="both", choices=["both", "leaflet", "google"],
-                    help="map engine(s) for --make-map / --make-all-maps")
+                    help="map engine(s) for --make-map")
     ap.add_argument("--google-key", default="",
                     help="Google Maps JS API key to bake into google map builds")
     args = ap.parse_args()
@@ -225,8 +240,6 @@ def main():
         cmd_update(normalize_routes(args.live_update), wayback=False)
     elif args.make_map:
         cmd_make_maps(normalize_routes(args.make_map), args.engine, args.google_key)
-    elif args.make_all_maps:
-        cmd_make_maps(discover_routes(), args.engine, args.google_key)
     else:
         cmd_status()
 
