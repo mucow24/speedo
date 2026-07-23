@@ -211,9 +211,15 @@ NTAD geometry file does.
   background, the `#232323` popup cards, the shared speed gradient). It reads
   back the `CFG` JSON blob each generated map embeds — the maps are the
   source of truth for their own stats, so the index recomputes nothing — and
-  renders one card per route (length, top speed, average, coverage), tinting
-  each top-speed number with `build_map.speed_color` so page and maps share
-  one palette. A route appears iff its `speed_map_<route>.html` is on disk.
+  renders one card per route (length, top speed, average, coverage). Cards are
+  grouped under labelled horizontal dividers by coverage tier — *Fully covered*
+  [90–100 %], *Covered* [75–90 %), *Poorly covered* [50–75 %), *Very poorly
+  covered* (<50 %), highest first (`group_by_coverage`) — and sorted
+  alphabetically within each tier. Each card's upper-right corner stacks both
+  speeds, max above average, each tinted by its own value with
+  `build_map.speed_color` (the max also driving the card's left-border accent)
+  so page and maps share one palette. A route appears iff its
+  `speed_map_<route>.html` is on disk.
 
 CLI route arguments are canonicalized through `canonical_route` and
 deduped, keeping the "canonicalize at every entry point" invariant. The

@@ -212,6 +212,49 @@ def map_summary(cfg):
     }
 
 
+# Coverage tiers for the landing page, highest first. Each (label, low) claims
+# the routes whose coverage percent is >= `low` and below the previous tier's
+# floor, so the bands are [90, 100], [75, 90), [50, 75), [0, 50).
+COVERAGE_SECTIONS = [
+    ("Fully covered", 90.0),
+    ("Covered", 75.0),
+    ("Poorly covered", 50.0),
+    ("Very poorly covered", 0.0),
+]
+
+
+def coverage_pct(summary):
+    """A map's mapped-bin percentage, or 0.0 when it has no bins.
+
+    Same ratio the card shows (covered bins / total bins); a binless map has
+    no defined coverage, so it reads as 0% and sinks to the lowest tier
+    rather than dividing by zero.
+    """
+    return 100.0 * summary["covered"] / summary["bins"] if summary["bins"] else 0.0
+
+
+def group_by_coverage(summaries):
+    """Bucket summaries into the labelled coverage tiers for the index.
+
+    Returns ``[(label, [summary, ...]), ...]`` in descending-coverage order,
+    each tier's members sorted alphabetically by display name (case-insensitive),
+    and empty tiers omitted (no divider without cards under it).
+    """
+    buckets = {label: [] for label, _low in COVERAGE_SECTIONS}
+    for s in summaries:
+        pct = coverage_pct(s)
+        for label, low in COVERAGE_SECTIONS:  # highest floor first: first match wins
+            if pct >= low:
+                buckets[label].append(s)
+                break
+    groups = []
+    for label, _low in COVERAGE_SECTIONS:
+        members = sorted(buckets[label], key=lambda s: s["display"].lower())
+        if members:
+            groups.append((label, members))
+    return groups
+
+
 def _hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
@@ -233,7 +276,10 @@ def _num(v, fmt="{}"):
 
 
 def _card_html(s):
+    # The corner stacks both speeds, each tinted by its own value: the max on
+    # top (and driving the card's left-border accent), the average below.
     accent = speed_color(s["top"]) if s["top"] is not None else "#7a7f87"
+    avg_color = speed_color(s["avg"]) if s["avg"] is not None else "#7a7f87"
     pct = f"{100 * s['covered'] / s['bins']:.0f}%" if s["bins"] else "&mdash;"
     span = (f"{s['from']} &ndash; {s['to']}"
             if s.get("from") and s.get("to") else "")
@@ -248,16 +294,31 @@ def _card_html(s):
         <a class="card-link" href="{html.escape(s["leaflet"])}">
           <div class="card-head">
             <span class="route">{html.escape(s["display"])}</span>
-            <span class="top" style="color:{accent}">{_num(s["top"])}<span class="unit">mph top</span></span>
+            <span class="speeds">
+              <span class="top" style="color:{accent}">{_num(s["top"])}<span class="unit">mph max</span></span>
+              <span class="avg" style="color:{avg_color}">{_num(s["avg"])}<span class="unit">mph avg</span></span>
+            </span>
           </div>
           <div class="stats">
             <span><b>{_num(s["miles"], "{:.1f}")}</b> mi</span>
-            <span>avg <b>{_num(s["avg"])}</b> mph</span>
             <span><b>{pct}</b> mapped</span>
           </div>
           <div class="meta">{" &middot; ".join(meta_bits)}</div>
         </a>
       </li>"""
+
+
+def _section_html(label, members):
+    """One coverage tier: a labelled horizontal divider above its card grid.
+
+    `label` is a fixed COVERAGE_SECTIONS constant (never user data), so it
+    goes into the markup unescaped.
+    """
+    cards = "\n".join(_card_html(s) for s in members)
+    return (f'    <section class="section">\n'
+            f'      <div class="section-head"><span class="section-label">{label}</span></div>\n'
+            f'      <ul class="maps">\n{cards}\n      </ul>\n'
+            f'    </section>')
 
 
 def render_index(summaries):
@@ -268,8 +329,8 @@ def render_index(summaries):
     and the gold accent from the popups.
     """
     if summaries:
-        body = ('    <ul class="maps">\n'
-                + "\n".join(_card_html(s) for s in summaries) + "\n    </ul>")
+        body = "\n".join(_section_html(label, members)
+                         for label, members in group_by_coverage(summaries))
     else:
         body = ('    <div class="empty">No maps built yet.<br>Run '
                 '<code>python speedo_ctl.py --make-map all</code> to build some, '
@@ -315,16 +376,25 @@ PAGE_TMPL = r"""<!DOCTYPE html>
   .gradient { height: 8px; border-radius: 5px; background: __GRADIENT__; }
   .scale { display: flex; justify-content: space-between; color: #7a7f87;
            font-size: 11px; margin: 4px 1px 0; }
-  .maps { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 14px;
+  .section { margin-top: 30px; }
+  .section-head { display: flex; align-items: center; gap: 14px; margin: 0 2px; }
+  .section-head::after { content: ""; flex: 1 1 auto; height: 1px; background: #2f2f2f; }
+  .section-label { color: #d7dade; font-size: 12px; font-weight: 700; white-space: nowrap;
+                   text-transform: uppercase; letter-spacing: 1px; }
+  .maps { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 14px;
           grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .card { background: #232323; border: 1px solid #2f2f2f;
           border-left: 4px solid var(--accent); border-radius: 14px; overflow: hidden;
           transition: transform .12s ease, border-color .12s ease; }
   .card:hover { transform: translateY(-2px); border-color: #4a4a4a; }
   .card-link { display: block; padding: 16px 18px 14px; color: inherit; text-decoration: none; }
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .route { font-size: 18px; font-weight: 700; }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .route { font-size: 18px; font-weight: 700; padding-top: 2px; }
+  .speeds { display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+            text-align: right; }
   .top { font-size: 30px; font-weight: 800; line-height: 1; letter-spacing: -1px;
+         white-space: nowrap; }
+  .avg { font-size: 19px; font-weight: 800; line-height: 1; letter-spacing: -.5px;
          white-space: nowrap; }
   .unit { font-size: 11px; font-weight: 700; color: #7a7f87; letter-spacing: 0;
           margin-left: 4px; text-transform: uppercase; }

@@ -127,6 +127,87 @@ def test_render_index_colors_top_speed_like_the_map():
     assert bm.speed_color(150) in html
 
 
+def test_render_index_stacks_max_over_average_both_tinted():
+    # Purpose: the upper-right speed display shows BOTH speeds stacked and
+    # bold-tinted -- the max on top, the average below -- each tinted by its
+    # OWN value via the shared speed_color palette (a fast max and a slower
+    # average read as different colors). The average is removed from the plain
+    # stats row, freeing the space its old slot occupied.
+    html = ctl.render_index([_summary(top=150, avg=92)])
+    assert f'color:{bm.speed_color(150)}">150' in html   # max, tinted by 150
+    assert f'color:{bm.speed_color(92)}">92' in html      # avg, tinted by 92
+    assert "mph max" in html and "mph avg" in html
+    # max sits above the average in the stacked corner display
+    assert html.find('class="top"') < html.find('class="avg"')
+    # the average no longer appears as an "avg <b>..</b> mph" stat in the row
+    assert "avg <b>" not in html
+
+
+def test_group_by_coverage_buckets_and_sorts_alphabetically():
+    # Purpose: routes are grouped into the four coverage tiers and, within a
+    # tier, sorted alphabetically by display name -- exactly the layout the
+    # index must render (labelled dividers, alphabetical inside each).
+    groups = ctl.group_by_coverage([
+        _summary(display="Zephyr", covered=95, bins=100),    # 95% -> fully
+        _summary(display="Acela", covered=92, bins=100),     # 92% -> fully
+        _summary(display="Builder", covered=80, bins=100),   # 80% -> covered
+        _summary(display="Cascades", covered=60, bins=100),  # 60% -> poorly
+        _summary(display="Downeaster", covered=10, bins=100),  # 10% -> very poorly
+    ])
+    assert [label for label, _ in groups] == [
+        "Fully covered", "Covered", "Poorly covered", "Very poorly covered"]
+    by_label = dict(groups)
+    assert [s["display"] for s in by_label["Fully covered"]] == ["Acela", "Zephyr"]
+
+
+def test_group_by_coverage_tier_edges_are_half_open_below():
+    # Purpose: pin the exact tier boundaries -- 90 is "fully" but 89.99 drops
+    # to "covered"; 75 is "covered" but 74.99 drops to "poorly"; 50 is
+    # "poorly" but 49.99 drops to "very poorly". 100 and 0 land in the ends.
+    def tier(covered, bins):
+        return ctl.group_by_coverage([_summary(covered=covered, bins=bins)])[0][0]
+
+    assert tier(100, 100) == "Fully covered"
+    assert tier(90, 100) == "Fully covered"
+    assert tier(8999, 10000) == "Covered"          # 89.99%
+    assert tier(75, 100) == "Covered"
+    assert tier(7499, 10000) == "Poorly covered"   # 74.99%
+    assert tier(50, 100) == "Poorly covered"
+    assert tier(4999, 10000) == "Very poorly covered"  # 49.99%
+    assert tier(0, 100) == "Very poorly covered"
+
+
+def test_group_by_coverage_omits_empty_tiers():
+    # Purpose: only tiers that actually contain routes get a divider; an empty
+    # tier must not render a stray labelled section on the page.
+    groups = ctl.group_by_coverage([_summary(covered=95, bins=100)])
+    assert [label for label, _ in groups] == ["Fully covered"]
+
+
+def test_group_by_coverage_treats_binless_map_as_very_poorly_covered():
+    # Purpose: a map with zero bins has no defined coverage; bucketing must
+    # not divide by zero, and the route lands in the lowest tier rather than
+    # vanishing from the page entirely.
+    groups = ctl.group_by_coverage([_summary(covered=0, bins=0)])
+    assert [label for label, _ in groups] == ["Very poorly covered"]
+
+
+def test_render_index_shows_labelled_dividers_in_descending_order():
+    # Purpose: the page groups cards under labelled horizontal dividers, in
+    # descending coverage order (fully -> very poorly); pin that the section
+    # labels are emitted, ordered, and that each route's card renders under
+    # its tier.
+    html = ctl.render_index([
+        _summary(display="HighCov", covered=95, bins=100),
+        _summary(display="LowCov", covered=10, bins=100),
+    ])
+    i_full = html.find("Fully covered")
+    i_poor = html.find("Very poorly covered")
+    assert i_full != -1 and i_poor != -1
+    assert i_full < i_poor                  # fully-covered section comes first
+    assert ">HighCov<" in html and ">LowCov<" in html
+
+
 def test_render_index_escapes_display_names():
     # Purpose: display names are interpolated straight into HTML; a stray '&'
     # or '<' must be escaped so route metadata can never break (or inject
