@@ -176,6 +176,27 @@ Pipeline per run, for one route:
   file's `kind == "station"` Points) draw as small white-cored dots — a
   toggleable overlay alongside the raw-observation dots — that reveal the
   station name on hover.
+- **Speed profile** — a bottom-right control (sized at runtime to the legend's
+  height, so the two bottom-corner boxes read as a pair) graphs displayed mph vs
+  route mile for the route's **longest branch** (`CFG.sections` carries each
+  section's inclusive `[firstBin, lastBin]` range; branched routes graph only
+  the biggest one). The line plots each bin's `binState` speed — the same value
+  the map paints, so the two never disagree — breaking at gaps. The line and the
+  shading under it are **coloured by speed**: a horizontal gradient keyed to
+  route position (`speedGradientStops`, one stop per plotted point coloured with
+  the shared `speedColor`, downsampled to a cap), so fast and slow stretches are
+  as plainly distinct as the map track. Hovering draws a cursor on both the graph
+  and the route (a marker placed by arc-length along the hovered bin). Under it,
+  four stats recomputed for the visible window: distance (miles that carry a
+  speed), max, average (distance ÷ time, the harmonic mean), and travel time.
+  Dragging the graph — or clicking two stations — selects a mile window that
+  zooms the graph, updates the stats, and washes the rest of the route (including
+  other branches, whose miles fall outside the window); a reset link clears it.
+  Each station's route-mile along the longest branch is the 4th field of its
+  `CFG.stations` entry (`null` off that branch, so those stations can't seed a
+  selection); it is computed at build time (`project_stations`). The graph math
+  lives in `COMMON_JS` (V8-tested); only the SVG/pointer wiring is in the
+  template.
 
 ## speedo_ctl.py
 

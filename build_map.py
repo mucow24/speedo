@@ -672,6 +672,30 @@ def short_ts(ts):
     return f"{ts[5:7]}/{ts[8:10]} {ts[11:16]}"
 
 
+def project_stations(station_pts, segs, tol=OFFROUTE_MILES):
+    """Route-mile of each station along the *longest* branch, or None.
+
+    The speed-profile graph is the longest section alone (`bin_base == 0`, the
+    section stitch/build_bins emit first), so stations are projected onto that
+    branch only: a station farther than `tol` from it -- off on a shorter
+    branch, or simply not near this line -- gets None and can't seed a
+    click-to-select. Returned list is aligned with `station_pts`.
+    """
+    sec0 = [s for s in segs if s[3] == 0]  # (a, b, seg_mi, base, mile_at_a, last)
+    if not sec0:
+        return [None] * len(station_pts)
+    index = SegmentIndex(sec0, tol)
+    out = []
+    for la, lo, *_ in station_pts:
+        d, si, t = index.nearest((la, lo))
+        if si is None or d > tol:
+            out.append(None)
+        else:
+            _a, _b, seg_mi, _base, mile_at_a, _last = sec0[si]
+            out.append(round(mile_at_a + t * seg_mi, 2))
+    return out
+
+
 def build(route, min_mph=MIN_PLAUSIBLE_MPH):
     route = canonical_route(route)  # every entry point resolves to the one canonical slug
     parts, cfg, station_pts = fetch_route_geometry(route)
@@ -729,6 +753,7 @@ def build(route, min_mph=MIN_PLAUSIBLE_MPH):
 
     runs = {(o["train"], o["run_date"]) for o in obs}
     dates = sorted(o["run_date"] for o in obs)
+    station_miles = project_stations(station_pts, segs)
     config = {
         "title": f"{cfg['display']} - observed speeds",
         "display": cfg["display"],
@@ -738,10 +763,16 @@ def build(route, min_mph=MIN_PLAUSIBLE_MPH):
         "anchors": [[v, "#{:02x}{:02x}{:02x}".format(*c)] for v, c in COLOR_ANCHORS],
         "stats": {"obs": used, "runs": len(runs), "from": dates[0], "to": dates[-1],
                   "built": dt.date.today().isoformat()},
+        # Inclusive [firstBin, lastBin] per section; the speed profile isolates
+        # the longest one. Bins never span a section boundary (see build_bins).
+        "sections": [[first, last] for first, last in ranges],
         "bins": bins_out,
         "obsPts": [[round(o["lat"], 5), round(o["lon"], 5), o["mph"],
                     o["train"], short_ts(o["ts"])] for o in obs],
-        "stations": [[la, lo, nm] for la, lo, nm in station_pts],
+        # 4th field is the station's route-mile on the longest branch (None off
+        # it): what the graph's click-to-select maps a station to.
+        "stations": [[la, lo, nm, mi]
+                     for (la, lo, nm), mi in zip(station_pts, station_miles)],
     }
     blob = json.dumps(config, separators=(",", ":"))
 
@@ -770,8 +801,11 @@ function speedColor(v){
 // an outlier turns its bin into a gap, so the build ships two interpolation
 // variants ("ia" outliers-in, "ib" outliers-hidden where it differs).
 // lo/hi are the speed-range highlight bounds; at the full [0, maxMph] range
-// the filter is inactive and styling is untouched.
-const S = {hideOut: true, interp: true, maxGap: 10, lo: 0, hi: CFG.maxMph};
+// the filter is inactive and styling is untouched. selLo/selHi are the route
+// selection (a mile window on the longest branch from a drag or a two-station
+// click); null means the whole route and no dimming.
+const S = {hideOut: true, interp: true, maxGap: 10, lo: 0, hi: CFG.maxMph,
+           selLo: null, selHi: null};
 
 // The wash: out-of-range segments pre-blend their speed color 85% toward the
 // basemap tone (WASH_BG, the dark CARTO tile tone declared in the template) at
@@ -818,8 +852,13 @@ function binStyle(b){
   else
     s = {color: '#9aa0a6', weight: 3, dash: '3 7', opacity: .95};
   // No-data bins have no speed to be "in range", so an active filter always
-  // washes them -- only in-range track should stand out.
-  if (rangeActive() && (st.kind === 'none' || !inSpeedRange(st.mph)))
+  // washes them -- only in-range track should stand out. A route selection
+  // washes anything outside its mile window (other branches included, since
+  // their miles fall past the longest branch's range). The two washes are
+  // independent; either one dims the bin.
+  const outOfSpeed = rangeActive() && (st.kind === 'none' || !inSpeedRange(st.mph));
+  const outOfSel = selActive() && !inSelection(b);
+  if (outOfSpeed || outOfSel)
     s.color = washColor(s.color);
   return s;
 }
@@ -949,6 +988,141 @@ function legendHtml(){
     <div class="lg-sub">max observed mph per half-mile bin - click the line</div>
     <div class="lg-sub">${CFG.stats.obs.toLocaleString()} obs / ${CFG.stats.runs} runs / ${CFG.stats.from} to ${CFG.stats.to}</div>`;
 }
+
+// --- speed profile graph ----------------------------------------------------
+// A mph-vs-route-mile chart of the longest branch (CFG.sections gives each
+// branch's inclusive [firstBin,lastBin] range). It plots each bin's *displayed*
+// speed (binState, so it honours the outlier/interp toggles) so the graph and
+// the map track always agree, breaking the line at gaps. A drag or a
+// two-station click narrows it to a mile window that also dims the rest of the
+// route. All the geometry/stat math lives here (pure, V8-tested); the SVG and
+// pointer wiring in the template is thin orchestration over it.
+
+// The longest branch's [firstBin, lastBin]; that branch alone is the profile.
+function longestSection(){
+  const secs = (CFG.sections && CFG.sections.length) ? CFG.sections
+             : [[0, CFG.bins.length - 1]];
+  let best = secs[0];
+  for (const s of secs) if (s[1] - s[0] > best[1] - best[0]) best = s;
+  return best;
+}
+// The speed a bin contributes to the profile: its displayed max, an
+// interpolated fill across a gap, or null where the toggles leave it blank.
+function binSpeed(b){
+  const st = binState(b);
+  return st.kind === 'none' ? null : st.mph;
+}
+// Profile points for the longest branch in mile order: {m, mph}, mph null at a
+// gap so the line breaks rather than drawing a false segment across it.
+function profilePoints(){
+  const [f, l] = longestSection();
+  const out = [];
+  for (let i = f; i <= l; i++)
+    out.push({m: CFG.bins[i].m, mph: binSpeed(CFG.bins[i])});
+  return out;
+}
+// Stats over the plotted bins whose mile is in [lo, hi]. Distance is the miles
+// that carry a speed (a gap contributes nothing -- you can't time track with no
+// reading); time sums each bin's traversal time at its own speed; average is
+// distance/time, the harmonic mean, so avg*time == distance exactly.
+function profileStats(lo, hi){
+  const [f, l] = longestSection();
+  let n = 0, mx = 0, hours = 0;
+  const eps = 1e-9;
+  for (let i = f; i <= l; i++){
+    const b = CFG.bins[i];
+    if (b.m < lo - eps || b.m > hi + eps) continue;
+    const mph = binSpeed(b);
+    if (mph == null) continue;
+    n++;
+    if (mph > mx) mx = mph;
+    hours += CFG.binMiles / mph;
+  }
+  const miles = n * CFG.binMiles;
+  return {nbins: n, miles, maxMph: mx, hours,
+          avgMph: hours > 0 ? miles / hours : 0};
+}
+// A duration in hours as "Hh Mm", or "M min" under an hour; whole minutes.
+function fmtDur(hours){
+  const mins = Math.round(hours * 60);
+  if (mins < 60) return mins + ' min';
+  return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
+}
+// [lat,lon] a fraction of the way along a polyline by arc length -- where the
+// hover cursor sits on the route for a given graph mile.
+function pointAlong(pts, frac){
+  frac = Math.max(0, Math.min(1, frac));
+  const seg = [];
+  let total = 0;
+  for (let i = 1; i < pts.length; i++){
+    const d = Math.hypot(pts[i][0] - pts[i-1][0], pts[i][1] - pts[i-1][1]);
+    seg.push(d); total += d;
+  }
+  if (total === 0) return pts[0].slice();
+  let target = frac * total;
+  for (let i = 0; i < seg.length; i++){
+    if (target <= seg[i] || i === seg.length - 1){
+      const t = seg[i] === 0 ? 0 : target / seg[i];
+      return [pts[i][0] + t * (pts[i+1][0] - pts[i][0]),
+              pts[i][1] + t * (pts[i+1][1] - pts[i][1])];
+    }
+    target -= seg[i];
+  }
+  return pts[pts.length - 1].slice();
+}
+// Global bin index on the longest branch nearest a route mile (the bin the
+// hover cursor points at); clamps to the branch's ends.
+function binAtMile(mile){
+  const [f, l] = longestSection();
+  const idx = f + Math.floor((mile - CFG.bins[f].m) / CFG.binMiles);
+  return Math.max(f, Math.min(l, idx));
+}
+// The longest branch's mile span [firstMile, lastMile + binMiles] -- the
+// graph's full x-domain and the selection's outer bounds.
+function branchMileRange(){
+  const [f, l] = longestSection();
+  return [CFG.bins[f].m, CFG.bins[l].m + CFG.binMiles];
+}
+function selActive(){ return S.selLo != null && S.selHi != null; }
+function inSelection(b){
+  const eps = 1e-9;
+  return b.m >= S.selLo - eps && b.m <= S.selHi + eps;
+}
+// Graph scales. x maps a route mile within the [lo,hi] domain to the plot's
+// [x0,x1] pixels; xToMile is its inverse (clamped, for reading a pointer back).
+// y maps 0 mph to the baseline y1 and maxMph to the top y0.
+function graphX(m, lo, hi, x0, x1){
+  return hi === lo ? x0 : x0 + (m - lo) / (hi - lo) * (x1 - x0);
+}
+function xToMile(px, lo, hi, x0, x1){
+  const f = x1 === x0 ? 0 : (px - x0) / (x1 - x0);
+  return lo + Math.max(0, Math.min(1, f)) * (hi - lo);
+}
+function graphY(v, maxV, y0, y1){
+  return y1 - (v / maxV) * (y1 - y0);
+}
+// Two selection ends (station clicks in either order) as an ascending window.
+function orderPair(a, b){ return a <= b ? [a, b] : [b, a]; }
+// SVG <stop> markup for a horizontal gradient that paints each route position
+// in its own speed colour -- so the profile line and the shading under it read
+// "by speed" the way the map track does. (A vertical/height gradient encodes
+// speed too, but when the data clusters in one band it looks nearly monochrome;
+// keying colour to position makes fast and slow stretches plainly distinct.)
+// `pts` are the in-domain, has-speed points in mile order; offset is each
+// point's fraction across the [lo, hi] domain. Stops are downsampled to `cap`
+// so a long route doesn't emit thousands of them (the ramp stays smooth).
+function speedGradientStops(pts, lo, hi, cap){
+  cap = cap || 240;
+  if (!pts.length) return '<stop offset="0%" stop-color="#9aa0a6"/>';
+  let s = pts;
+  if (s.length > cap){
+    const step = (s.length - 1) / (cap - 1), t = [];
+    for (let i = 0; i < cap; i++) t.push(s[Math.round(i * step)]);
+    s = t;
+  }
+  const off = hi > lo ? (m => (m - lo) / (hi - lo) * 100) : (() => 0);
+  return s.map(p => `<stop offset="${off(p.m).toFixed(2)}%" stop-color="${speedColor(p.mph)}"/>`).join('');
+}
 """
 
 COMMON_CSS = r"""
@@ -984,6 +1158,34 @@ COMMON_CSS = r"""
                text-transform: uppercase; margin: 2px 0 9px; }
   .pop-meta { font-size: 13px; color: #b9bdc4; margin-top: 3px; }
   .pop-est { color: #e8b93c; }
+
+  /* speed profile graph (bottom-right): mph vs route mile of the longest branch.
+     A flex column so its height can be pinned to the legend's at runtime and the
+     svg flexes to fill; ~33% wider than the legend. */
+  .profile { background: rgba(255,255,255,.95); border-radius: 8px; padding: 8px 10px 7px;
+             box-shadow: 0 1px 6px rgba(0,0,0,.35); font: 12px/1.4 system-ui, sans-serif;
+             width: 400px; color: #222; box-sizing: border-box;
+             display: flex; flex-direction: column; }
+  .pf-title { font-weight: 700; font-size: 13px; margin-bottom: 3px; flex: 0 0 auto; }
+  .pf-svg { display: block; width: 100%; flex: 1 1 auto; min-height: 96px;
+            touch-action: none; cursor: crosshair; }
+  .pf-axis { stroke: #bbb; stroke-width: 1; }
+  .pf-grid { stroke: #ededed; stroke-width: 1; }
+  .pf-tick { fill: #888; }
+  .pf-area { opacity: .30; }
+  .pf-line { fill: none; stroke-width: 1.9; stroke-linejoin: round; stroke-linecap: round; }
+  .pf-cursor { stroke: #111; stroke-width: 1; stroke-dasharray: 3 2; }
+  .pf-cur-dot { fill: #111; }
+  .pf-read { fill: #111; font-size: 10px; font-weight: 600; }
+  .pf-sel-band { fill: rgba(6,104,194,.14); stroke: rgba(6,104,194,.55); stroke-width: 1; }
+  .pf-stats { display: flex; margin-top: 5px; flex: 0 0 auto; }
+  .pf-stat { text-align: center; flex: 1; }
+  .pf-stat b { display: block; font-size: 15px; color: #111; font-weight: 800; line-height: 1.1; }
+  .pf-stat span { color: #777; font-size: 9px; text-transform: uppercase; letter-spacing: .4px; }
+  .pf-foot { display: flex; justify-content: space-between; align-items: baseline;
+             margin-top: 5px; color: #888; font-size: 10px; flex: 0 0 auto; }
+  .pf-reset { color: #0668c2; cursor: pointer; text-decoration: none; }
+  .pf-reset.pf-off { visibility: hidden; }
 
   /* Leaflet popup chrome -> dark card */
   .leaflet-popup-content-wrapper { background: #232323; color: #fff; border: 3px solid #fff;
@@ -1041,13 +1243,35 @@ const dots = L.layerGroup(dotItems.map(([m]) => m));
 
 // Station stops: a small white-cored dot with a dark rim reads as a "stop"
 // against the colored track without shouting; hover shows the station name.
-const stationItems = (CFG.stations || []).map(([la, lo, name]) =>
-  L.circleMarker([la, lo], {radius: 4, weight: 1.5, color: '#111',
-                            fillColor: '#f5f5f5', fillOpacity: 1})
-    .bindTooltip(name, {direction: 'top', offset: [0, -4]}));
-const stations = L.layerGroup(stationItems).addTo(map);
+// Each remembers its route-mile (4th field, null off the longest branch) so
+// clicking two stations forms a selection on the profile.
+const stationMarks = (CFG.stations || []).map(([la, lo, name, mile]) => ({
+  mile,
+  marker: L.circleMarker([la, lo], {radius: 4, weight: 1.5, color: '#111',
+                                    fillColor: '#f5f5f5', fillOpacity: 1})
+    .bindTooltip(name, {direction: 'top', offset: [0, -4]})}));
+const stations = L.layerGroup(stationMarks.map(s => s.marker)).addTo(map);
 L.control.layers(null, {'Stations': stations, 'Raw observations': dots},
                  {collapsed: false}).addTo(map);
+
+// A marker that rides the route at the graph's hover position.
+const routeCursor = L.circleMarker([0, 0],
+  {radius: 6, weight: 2, color: '#111', fillColor: '#fff', fillOpacity: 1,
+   interactive: false}).addTo(map);
+routeCursor.setStyle({opacity: 0, fillOpacity: 0});   // hidden until hovered
+
+// Speed-profile state, declared here (ahead of the profile section below)
+// because restyle() -> drawProfile() runs the moment the legend is added, and
+// drawProfile reads pfSvg. See the profile section for what each holds.
+// PF is the SVG's viewBox size (w,h) plus fixed plot insets; w/h are set at
+// runtime by fitProfile() so the box matches the legend's height. plot() is the
+// drawable rect (viewBox == pixels, so no distortion when resized).
+const PF = {w: 400, h: 150, padL: 34, padR: 8, padT: 12, padB: 18};
+function plot(){ return {xL: PF.padL, xR: PF.w - PF.padR, yT: PF.padT, yB: PF.h - PF.padB}; }
+let pfSvg = null;      // the <svg> element (persistent; its children are redrawn)
+let pfBox = null;      // the .profile control div (sized to match the legend)
+let pfDrag = null;     // {x0} while drag-selecting on the graph
+let pendingStn = null; // first station clicked, awaiting a second
 
 const restyle = () => {
   binLines.forEach(([line, b]) => line.setStyle(toLeaflet(binStyle(b))));
@@ -1056,6 +1280,7 @@ const restyle = () => {
     m.setStyle({color: on ? '#fff' : washColor('#ffffff'),
                 fillColor: on ? speedColor(mph) : washColor(speedColor(mph))});
   });
+  drawProfile();
 };
 
 const legend = L.control({position: 'bottomleft'});
@@ -1068,6 +1293,216 @@ legend.onAdd = () => {
   return d;
 };
 legend.addTo(map);
+
+// --- speed profile graph (top-right) ----------------------------------------
+// mph vs route mile for the longest branch. Hover draws a cursor on both the
+// graph and the route; drag selects a mile window (zooms the graph, dims the
+// rest of the route); clicking two stations does the same between them. All the
+// math is in COMMON_JS (V8-tested); this is DOM/pointer orchestration over it.
+// State (PF, pfSvg, pfDrag, pendingStn) is declared above restyle().
+
+function pfDomain(){ return selActive() ? [S.selLo, S.selHi] : branchMileRange(); }
+function esc(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+// The graph's SVG children: the speed gradient, y grid at the colour anchors,
+// the area+line (broken at gaps, clipped to the domain), x mile labels, and
+// hidden cursor/band placeholders the pointer handlers reveal.
+function profileSvgInner(){
+  const {xL, xR, yT, yB} = plot(), mx = CFG.maxMph, [lo, hi] = pfDomain();
+  const eps = 1e-9;
+  const shown = profilePoints().filter(p =>
+    p.mph != null && p.m >= lo-eps && p.m <= hi+eps);
+  let g = `<defs><linearGradient id="pf-grad" gradientUnits="userSpaceOnUse" `
+        + `x1="${xL}" y1="0" x2="${xR}" y2="0">${speedGradientStops(shown, lo, hi)}</linearGradient></defs>`;
+  for (const [s] of CFG.anchors){
+    const y = graphY(s, mx, yT, yB);
+    g += `<line class="pf-grid" x1="${xL}" y1="${y.toFixed(1)}" x2="${xR}" y2="${y.toFixed(1)}"/>`
+       + `<text class="pf-tick" x="${xL-4}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9">${s}</text>`;
+  }
+  let dLine = '', dArea = '', run = [];
+  const flush = () => {
+    if (run.length){
+      const seg = run.map(p => `${p[0]} ${p[1]}`).join(' L');
+      dLine += `M${seg}`;
+      dArea += `M${run[0][0]} ${yB} L${seg} L${run[run.length-1][0]} ${yB}Z`;
+    }
+    run = [];
+  };
+  for (const p of profilePoints()){
+    if (p.mph == null || p.m < lo-eps || p.m > hi+eps){ flush(); continue; }
+    run.push([graphX(p.m, lo, hi, xL, xR).toFixed(1),
+              graphY(p.mph, mx, yT, yB).toFixed(1)]);
+  }
+  flush();
+  g += `<path class="pf-area" fill="url(#pf-grad)" d="${dArea}"/>`
+     + `<path class="pf-line" stroke="url(#pf-grad)" d="${dLine}"/>`
+     + `<line class="pf-axis" x1="${xL}" y1="${yB}" x2="${xR}" y2="${yB}"/>`;
+  const dec = (hi - lo) < 12 ? 1 : 0;
+  for (let i = 0; i <= 4; i++){
+    const mile = lo + (hi - lo) * i / 4, x = graphX(mile, lo, hi, xL, xR);
+    const anchor = i === 0 ? 'start' : i === 4 ? 'end' : 'middle';
+    g += `<text class="pf-tick" x="${x.toFixed(1)}" y="${yB+11}" text-anchor="${anchor}" font-size="9">${mile.toFixed(dec)}</text>`;
+  }
+  g += `<rect id="pf-sel-band" class="pf-sel-band" y="${yT}" height="${yB-yT}" style="display:none"/>`
+     + `<line id="pf-cursor" class="pf-cursor" y1="${yT}" y2="${yB}" style="display:none"/>`
+     + `<circle id="pf-cur-dot" class="pf-cur-dot" r="2.6" style="display:none"/>`
+     + `<text id="pf-read" class="pf-read" style="display:none"></text>`;
+  return g;
+}
+
+// Redraw the graph and refresh the stats and reset button for the domain.
+function drawProfile(){
+  if (!pfSvg) return;
+  pfSvg.innerHTML = profileSvgInner();
+  const root = pfSvg.parentNode, [lo, hi] = pfDomain(), st = profileStats(lo, hi);
+  root.querySelector('#pf-dist').textContent = st.miles.toFixed(1);
+  root.querySelector('#pf-max').textContent = st.maxMph || '--';
+  root.querySelector('#pf-avg').textContent = st.avgMph ? Math.round(st.avgMph) : '--';
+  root.querySelector('#pf-time').textContent = st.nbins ? fmtDur(st.hours) : '--';
+  root.querySelector('#pf-reset').classList.toggle('pf-off', !selActive());
+}
+
+// clientX -> SVG user x, undoing the viewBox scaling to the rendered width.
+function pfClientToX(clientX){
+  const r = pfSvg.getBoundingClientRect();
+  return (clientX - r.left) / r.width * PF.w;
+}
+function clampX(x){ const p = plot(); return Math.max(p.xL, Math.min(p.xR, x)); }
+
+function showCursor(mile){
+  const {xL, xR, yT, yB} = plot(), [lo, hi] = pfDomain();
+  const b = CFG.bins[binAtMile(mile)], x = graphX(mile, lo, hi, xL, xR), mph = binSpeed(b);
+  const cur = pfSvg.querySelector('#pf-cursor');
+  cur.setAttribute('x1', x); cur.setAttribute('x2', x); cur.style.display = '';
+  const dot = pfSvg.querySelector('#pf-cur-dot'), read = pfSvg.querySelector('#pf-read');
+  if (mph != null){
+    const y = graphY(mph, CFG.maxMph, yT, yB);
+    dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.style.display = '';
+    read.textContent = `mi ${mile.toFixed(1)} · ${mph} mph`;
+  } else {
+    dot.style.display = 'none';
+    read.textContent = `mi ${mile.toFixed(1)} · no data`;
+  }
+  read.setAttribute('y', yT + 8);
+  read.setAttribute('x', clampX(x + (x > (xL+xR)/2 ? -4 : 4)));
+  read.setAttribute('text-anchor', x > (xL+xR)/2 ? 'end' : 'start');
+  read.style.display = '';
+  const frac = Math.max(0, Math.min(1, (mile - b.m) / CFG.binMiles));
+  routeCursor.setLatLng(pointAlong(b.pts, frac)).setStyle({opacity: 1, fillOpacity: 1});
+}
+function hideCursor(){
+  if (!pfSvg) return;
+  ['#pf-cursor', '#pf-cur-dot', '#pf-read'].forEach(id => {
+    const el = pfSvg.querySelector(id); if (el) el.style.display = 'none';
+  });
+  routeCursor.setStyle({opacity: 0, fillOpacity: 0});
+}
+function showBand(x0, x1){
+  const band = pfSvg.querySelector('#pf-sel-band');
+  band.setAttribute('x', Math.min(x0, x1));
+  band.setAttribute('width', Math.abs(x1 - x0));
+  band.style.display = '';
+}
+
+function applySelection(lo, hi){
+  const [blo, bhi] = branchMileRange();
+  lo = Math.max(blo, Math.min(lo, bhi));
+  hi = Math.max(blo, Math.min(hi, bhi));
+  if (hi - lo < CFG.binMiles) return;        // too thin to be a stretch; ignore
+  S.selLo = lo; S.selHi = hi;
+  restyle();
+}
+function clearPending(){
+  if (pendingStn) pendingStn.marker.setStyle({radius: 4, color: '#111', fillColor: '#f5f5f5'});
+  pendingStn = null;
+}
+function clearSelection(){ S.selLo = S.selHi = null; clearPending(); restyle(); }
+
+function clickStation(s){
+  if (s.mile == null) return;                // station is off the graphed branch
+  if (pendingStn === s){ clearPending(); return; }   // same one again -> cancel
+  if (pendingStn){
+    const [lo, hi] = orderPair(pendingStn.mile, s.mile);
+    clearPending();
+    applySelection(lo, hi);
+  } else {
+    pendingStn = s;
+    s.marker.setStyle({radius: 6, color: '#0668c2', fillColor: '#8fc2f2'});
+  }
+}
+stationMarks.forEach(s => s.marker.on('click', () => clickStation(s)));
+
+const profile = L.control({position: 'bottomright'});
+profile.onAdd = () => {
+  const d = L.DomUtil.create('div', 'profile');
+  d.innerHTML =
+    `<div class="pf-title">Speed profile &mdash; ${esc(CFG.display)}</div>`
+    + `<svg class="pf-svg" viewBox="0 0 ${PF.w} ${PF.h}" preserveAspectRatio="none"></svg>`
+    + `<div class="pf-stats">`
+    + `<div class="pf-stat"><b id="pf-dist">--</b><span>miles</span></div>`
+    + `<div class="pf-stat"><b id="pf-max">--</b><span>max mph</span></div>`
+    + `<div class="pf-stat"><b id="pf-avg">--</b><span>avg mph</span></div>`
+    + `<div class="pf-stat"><b id="pf-time">--</b><span>time</span></div></div>`
+    + `<div class="pf-foot"><span>drag to zoom &middot; click two stations</span>`
+    + `<a class="pf-reset pf-off" id="pf-reset" href="#">reset zoom</a></div>`;
+  L.DomEvent.disableClickPropagation(d);
+  L.DomEvent.disableScrollPropagation(d);
+  pfBox = d;
+  pfSvg = d.querySelector('.pf-svg');
+  wireProfile();
+  d.querySelector('#pf-reset').addEventListener('click', ev => {
+    ev.preventDefault(); clearSelection();
+  });
+  drawProfile();
+  return d;
+};
+profile.addTo(map);
+fitProfile();
+if (typeof window !== 'undefined' && window.addEventListener)
+  window.addEventListener('resize', fitProfile);
+
+// Size the profile box to the legend's height (they sit at the two bottom
+// corners and should read as a pair) and give the graph the whole viewBox in
+// pixels, so the SVG scales 1:1 with no text distortion.
+function fitProfile(){
+  if (!pfBox || !pfSvg) return;
+  const legendEl = document.querySelector('.legend');
+  const targetH = legendEl ? legendEl.offsetHeight : 0;
+  if (targetH) pfBox.style.height = targetH + 'px';
+  const w = Math.round(pfSvg.clientWidth), h = Math.round(pfSvg.clientHeight);
+  if (w < 40 || h < 40) return;
+  PF.w = w; PF.h = h;
+  pfSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  drawProfile();
+}
+
+function wireProfile(){
+  pfSvg.addEventListener('pointermove', e => {
+    const x = pfClientToX(e.clientX), p = plot();
+    if (pfDrag){ showBand(pfDrag.x0, clampX(x)); return; }
+    const [lo, hi] = pfDomain();
+    showCursor(xToMile(x, lo, hi, p.xL, p.xR));
+  });
+  pfSvg.addEventListener('pointerleave', () => { if (!pfDrag) hideCursor(); });
+  pfSvg.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    pfDrag = {x0: clampX(pfClientToX(e.clientX))};
+    pfSvg.setPointerCapture(e.pointerId);
+    hideCursor();
+  });
+  pfSvg.addEventListener('pointerup', e => {
+    if (!pfDrag) return;
+    const x0 = pfDrag.x0, x1 = clampX(pfClientToX(e.clientX));
+    pfDrag = null;
+    const band = pfSvg.querySelector('#pf-sel-band'); if (band) band.style.display = 'none';
+    if (Math.abs(x1 - x0) < 4) return;       // a click, not a drag
+    const [lo, hi] = pfDomain(), p = plot();
+    const [mlo, mhi] = orderPair(xToMile(x0, lo, hi, p.xL, p.xR),
+                                 xToMile(x1, lo, hi, p.xL, p.xR));
+    applySelection(mlo, mhi);
+  });
+  pfSvg.addEventListener('pointercancel', () => { pfDrag = null; });
+}
 </script>
 </body>
 </html>
