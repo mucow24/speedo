@@ -31,6 +31,12 @@ OUT = HERE / "out"
 
 ARCGIS = ("https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/"
           "NTAD_Amtrak_Routes/FeatureServer/0/query")
+# Sibling NTAD layer: every Amtrak station keyed by 3-letter code -> lat/lon.
+# The authoritative external source for station coordinates (same provider as
+# the route lines above), so station dots are looked up, never inferred from
+# our own GPS pings.
+ARCGIS_STATIONS = ("https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/"
+                   "services/NTAD_Amtrak_Stations/FeatureServer/0/query")
 
 # RailRat route slug -> NTAD feature name, display name, and the endpoint that
 # should be mile 0 (so popup mile markers read in timetable direction).
@@ -193,12 +199,152 @@ def geojson_parts(gj):
     return parts
 
 
+# --- station coordinates ----------------------------------------------------
+# Each route's geometry file also carries its station stops as Point features
+# (properties.kind == "station"). *Which* stations = the codes actually seen in
+# station_events.jsonl for the route (real observed stops); *where* each one is
+# = its NTAD coordinate looked up by code. Nothing here is inferred: a code
+# with no NTAD coord is reported missing, never guessed onto the line.
+
+STATIONS_CACHE = DATA / "amtrak_stations.geojson"  # full NTAD station list; NOT
+# under data/geometry/ (that folder's *.geojson files each define a route).
+
+
+def fetch_amtrak_stations():
+    """Fetch the whole NTAD Amtrak Stations layer as one GeoJSON FeatureCollection."""
+    feats, offset = [], 0
+    while True:
+        params = urllib.parse.urlencode({
+            "where": "1=1", "outFields": "Code,StationName",
+            "returnGeometry": "true", "outSR": "4326", "geometryPrecision": "6",
+            "f": "geojson", "resultOffset": str(offset), "resultRecordCount": "2000",
+        })
+        req = urllib.request.Request(f"{ARCGIS_STATIONS}?{params}",
+                                     headers={"User-Agent": "speedo/0.1 hobby project"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            page = json.loads(resp.read()).get("features", [])
+        feats += page
+        if len(page) < 2000:
+            break
+        offset += 2000
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def load_station_index():
+    """{station code: (lat, lon)} for every NTAD station, cached on disk.
+
+    Fetches from NTAD only when the cache is absent, matching how route
+    geometry is cached; the file is committed so refreshes run offline.
+    """
+    if STATIONS_CACHE.exists():
+        gj = json.loads(STATIONS_CACHE.read_text(encoding="utf-8"))
+    else:
+        print("Fetching NTAD Amtrak Stations ...")
+        gj = fetch_amtrak_stations()
+        STATIONS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        STATIONS_CACHE.write_text(json.dumps(gj, separators=(",", ":")),
+                                  encoding="utf-8")
+    index = {}
+    for feat in gj.get("features", []):
+        code = (feat.get("properties") or {}).get("Code")
+        coords = (feat.get("geometry") or {}).get("coordinates")
+        if code and code.strip() and coords:
+            lon, lat = coords
+            index[code] = (round(lat, 5), round(lon, 5))
+    return index
+
+
+def route_station_names(route, path=None):
+    """Distinct (code, name) stops observed for one route, sorted by code.
+
+    The station set is drawn straight from station_events -- the stops trains
+    on this route actually reported -- so it is factual, not geometric guessing.
+    """
+    path = path or DATA / "station_events.jsonl"
+    names = {}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            e = json.loads(line)
+            if e["route"] == route:
+                names.setdefault(e["station"], e["name"])
+    return sorted(names.items())
+
+
+def station_features(route, index, path=None):
+    """Resolve a route's observed stops to GeoJSON Point features.
+
+    Returns (features, missing): a Point feature per station whose code is in
+    the external `index`, and the sorted list of codes with no NTAD coord --
+    those are dropped, not placed by guesswork (e.g. "CBN", the Maple Leaf's
+    Canadian-border checkpoint, which is not a station).
+    """
+    feats, missing = [], []
+    for code, name in route_station_names(route, path):
+        if code in index:
+            lat, lon = index[code]
+            feats.append({"type": "Feature",
+                          "properties": {"kind": "station", "code": code, "name": name},
+                          "geometry": {"type": "Point", "coordinates": [lon, lat]}})
+        else:
+            missing.append(code)
+    return feats, missing
+
+
+def merge_station_features(gj, feats):
+    """Return a copy of `gj` with its station Points replaced by `feats`.
+
+    Idempotent: existing station features are stripped first, so refreshing
+    never duplicates them; every non-station feature and top-level key (crs,
+    type) is preserved, keeping the line spine intact.
+    """
+    kept = [f for f in gj.get("features", [])
+            if (f.get("properties") or {}).get("kind") != "station"]
+    out = dict(gj)
+    out["features"] = kept + list(feats)
+    return out
+
+
+def geojson_station_points(gj):
+    """[(lat, lon, name)] for the station Point features in a geometry file."""
+    pts = []
+    for feat in gj.get("features", []):
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        if props.get("kind") == "station" and geom.get("type") == "Point":
+            lon, lat = geom["coordinates"]
+            pts.append((round(lat, 5), round(lon, 5), props.get("name")))
+    return pts
+
+
+def refresh_route_stations(route, index=None):
+    """Rewrite data/geometry/<route>.geojson with fresh station Points.
+
+    Returns (added, missing). Leaves the file byte-for-byte unchanged when
+    nothing would move (no stations to add and none already present), so the
+    three station-less routes stay clean and re-runs are no-ops.
+    """
+    if index is None:
+        index = load_station_index()
+    cache = DATA / "geometry" / f"{route}.geojson"
+    gj = json.loads(cache.read_text(encoding="utf-8"))
+    feats, missing = station_features(route, index)
+    if not feats and not geojson_station_points(gj):
+        return 0, missing
+    merged = merge_station_features(gj, feats)
+    text = json.dumps(merged, separators=(",", ":"))
+    if text != cache.read_text(encoding="utf-8"):
+        cache.write_text(text, encoding="utf-8")
+    return len(feats), missing
+
+
 def fetch_route_geometry(route):
     """Download (and cache) the NTAD line for the route as a list of parts.
 
     `route` must already be a canonical slug (see `canonical_route`); callers
     funnel through `build`, which canonicalizes before anything touches the
-    per-route cache filename.
+    per-route cache filename. Returns (parts, cfg, station_pts); on a fresh
+    network fetch the route's station Points are embedded before caching, so
+    "delete to re-fetch" restores the stations too.
     """
     cfg = ROUTES[route]
     gdir = DATA / "geometry"
@@ -218,12 +364,16 @@ def fetch_route_geometry(route):
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = resp.read()
         gj = json.loads(body)
-        if gj.get("features"):
-            cache.write_bytes(body)  # don't cache an empty result (bad name)
+        if gj.get("features"):  # don't cache an empty result (bad name)
+            feats, missing = station_features(route, load_station_index())
+            if missing:
+                print(f"  {len(missing)} station code(s) had no NTAD coord: {missing}")
+            gj = merge_station_features(gj, feats)
+            cache.write_text(json.dumps(gj, separators=(",", ":")), encoding="utf-8")
     parts = geojson_parts(gj)
     if not parts:
         raise SystemExit(f"NTAD returned no geometry for name='{cfg['ntad']}'")
-    return parts, cfg
+    return parts, cfg, geojson_station_points(gj)
 
 
 def part_miles(part):
@@ -524,7 +674,7 @@ def short_ts(ts):
 
 def build(route, min_mph=MIN_PLAUSIBLE_MPH):
     route = canonical_route(route)  # every entry point resolves to the one canonical slug
-    parts, cfg = fetch_route_geometry(route)
+    parts, cfg, station_pts = fetch_route_geometry(route)
     sections = stitch(parts, cfg.get("mile0"))
     raw_verts = sum(len(c) for c in sections)
     sections = [simplify(c, SIMPLIFY_MILES) for c in sections]
@@ -575,6 +725,7 @@ def build(route, min_mph=MIN_PLAUSIBLE_MPH):
     print(f"Post-process: {sum(1 for a in ann.values() if 'out' in a)} single-point "
           f"outliers flagged, "
           f"{sum(1 for a in ann.values() if 'ia' in a or 'ib' in a)} bins interpolable")
+    print(f"Stations: {len(station_pts)} dots")
 
     runs = {(o["train"], o["run_date"]) for o in obs}
     dates = sorted(o["run_date"] for o in obs)
@@ -590,6 +741,7 @@ def build(route, min_mph=MIN_PLAUSIBLE_MPH):
         "bins": bins_out,
         "obsPts": [[round(o["lat"], 5), round(o["lon"], 5), o["mph"],
                     o["train"], short_ts(o["ts"])] for o in obs],
+        "stations": [[la, lo, nm] for la, lo, nm in station_pts],
     }
     blob = json.dumps(config, separators=(",", ":"))
 
@@ -886,7 +1038,16 @@ const dotItems = CFG.obsPts.map(([la, lo, mph, train, ts]) =>
                              fillColor: speedColor(mph), fillOpacity: .9})
     .bindTooltip(`${mph} mph - train ${train}, ${ts}`), mph]);
 const dots = L.layerGroup(dotItems.map(([m]) => m));
-L.control.layers(null, {'Raw observations': dots}, {collapsed: false}).addTo(map);
+
+// Station stops: a small white-cored dot with a dark rim reads as a "stop"
+// against the colored track without shouting; hover shows the station name.
+const stationItems = (CFG.stations || []).map(([la, lo, name]) =>
+  L.circleMarker([la, lo], {radius: 4, weight: 1.5, color: '#111',
+                            fillColor: '#f5f5f5', fillOpacity: 1})
+    .bindTooltip(name, {direction: 'top', offset: [0, -4]}));
+const stations = L.layerGroup(stationItems).addTo(map);
+L.control.layers(null, {'Stations': stations, 'Raw observations': dots},
+                 {collapsed: false}).addTo(map);
 
 const restyle = () => {
   binLines.forEach(([line, b]) => line.setStyle(toLeaflet(binStyle(b))));
@@ -912,6 +1073,24 @@ legend.addTo(map);
 </html>
 """
 
+def refresh_stations(target):
+    """Populate station Points into geometry files. `target` is a route slug
+    or 'all' (every cached route). Prints coverage; builds no maps."""
+    index = load_station_index()
+    if target == "all":
+        routes = sorted(p.stem for p in (DATA / "geometry").glob("*.geojson"))
+    else:
+        routes = [canonical_route(target)]
+    unmatched = set()
+    for r in routes:
+        added, missing = refresh_route_stations(r, index)
+        unmatched |= set(missing)
+        note = f", {len(missing)} unmatched {missing}" if missing else ""
+        print(f"{r}: {added} stations{note}")
+    if unmatched:
+        print(f"unmatched codes (no NTAD coord, skipped): {sorted(unmatched)}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--route", default="AcelaExpress",
@@ -920,7 +1099,14 @@ def main():
                     help="ignore observations slower than this -- stopped or "
                          "stuck trains, not track speed limits "
                          f"(default {MIN_PLAUSIBLE_MPH})")
+    ap.add_argument("--refresh-stations", metavar="ROUTE", nargs="?", const="all",
+                    help="pull station coords from NTAD into "
+                         "data/geometry/<ROUTE>.geojson (ROUTE or 'all'); "
+                         "builds no map")
     args = ap.parse_args()
+    if args.refresh_stations:
+        refresh_stations(args.refresh_stations)
+        return
     build(args.route, args.min_mph)
 
 

@@ -21,8 +21,8 @@ archive.org ──┘        │            └─► data/station_events.jsonl 
   (--wayback)          └──► data/raw/**.html ──(--reparse: rebuilds      │
                             (disposable cache)  both datasets)           │
                                                       NTAD ArcGIS ───────┘
-                                               (route geometry, cached in
-                                                  data/geometry/)
+                                               (route geometry + station
+                                                coords, cached under data/)
 ```
 
 Two independently runnable stages whose only data hand-off is the JSONL
@@ -108,9 +108,24 @@ Pipeline per run, for one route:
   at every entry point" invariant.
 - **Geometry** (`fetch_route_geometry`) — download the route's official line
   from the USDOT/BTS NTAD "Amtrak Routes" ArcGIS FeatureServer, cached in
-  `data/geometry/<route>.geojson`. The `ROUTES` dict maps RailRat slug →
-  NTAD feature name, display name, and the mile-0 endpoint (which end mile
-  markers count from). New routes need an entry here.
+  `data/geometry/<route>.geojson`. That same file also carries the route's
+  station stops as Point features (`properties.kind == "station"`); see
+  **Stations** below. The `ROUTES` dict maps RailRat slug → NTAD feature name,
+  display name, and the mile-0 endpoint (which end mile markers count from).
+  New routes need an entry here.
+- **Stations** (`load_station_index`, `station_features`,
+  `refresh_route_stations`) — *which* stations a route serves is the set of
+  distinct station codes observed for it in `station_events.jsonl` (real
+  reported stops, not nearest-line guesses); *where* each one is comes from the
+  NTAD "Amtrak Stations" layer (cached whole in `data/amtrak_stations.geojson`)
+  looked up by code — never inferred from our own GPS pings. The resolved
+  points are written into the route's geometry file as `kind == "station"`
+  Point features; a code with no NTAD coordinate (e.g. `CBN`, the Maple Leaf's
+  Canadian-border checkpoint, which is not a station) is skipped and reported,
+  not placed. `geojson_parts` ignores these Points, so the line spine — and
+  speedo_ctl's coverage math — is untouched. Populate or refresh them with
+  `build_map.py --refresh-stations <route|all>`; a fresh network fetch of a
+  route's line re-embeds them too, so "delete to re-fetch" stays whole.
 - **Spine construction** — NTAD features arrive as messy MultiLineString
   scraps. `dedupe_parts` drops scraps that merely re-trace a longer part
   (second track, twice-digitized stubs); `stitch` joins parts whose endpoints
@@ -157,7 +172,10 @@ Pipeline per run, for one route:
   tone declared in the template) at full opacity, rather than dropping alpha:
   translucent lines additively brighten where they overlap at high zoom. All
   of this is display-time state in the front-end JS (`COMMON_JS`) — nothing
-  about the filter is baked into the build.
+  about the filter is baked into the build. Station stops (from the geometry
+  file's `kind == "station"` Points) draw as small white-cored dots — a
+  toggleable overlay alongside the raw-observation dots — that reveal the
+  station name on hover.
 
 ## speedo_ctl.py
 
@@ -211,7 +229,8 @@ reject it as an unknown route.
 | `data/observations.jsonl` | Position reports. One JSON object each: `route, train, run_date, ts, lat, lon, mph, heading, desc, src` (`src` = `live` or `wayback:<stamp>`). Append-only, deduped, safe to re-scrape. | yes |
 | `data/station_events.jsonl` | Station timings. One JSON object each: `route, train, run_date, station, name, arr, arr_delay, dep, dep_delay, src` (times ISO, delays in minutes, late positive / early negative, null when the page didn't state one). Append-only; a station's record may appear in several progressively-more-complete variants per run. | yes |
 | `data/roster_<route>.json` | Known train numbers per route (sorted list). | yes |
-| `data/geometry/<route>.geojson` | Cached NTAD route geometry. Delete to re-fetch. | yes |
+| `data/geometry/<route>.geojson` | Cached NTAD route line, plus the route's station stops as `kind=="station"` Point features. Delete to re-fetch (line and stations are both restored). | yes |
+| `data/amtrak_stations.geojson` | Full NTAD "Amtrak Stations" layer (code → lat/lon); the external source station dots are looked up from. Delete to re-fetch. | yes |
 | `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches. A disposable debug/reprocessing cache — delete freely. | no |
 | `out/` | Generated maps and the `--make-index` landing page (`index.html`). | no |
 | `tests/fixtures/*.html` | A curated handful of raw pages, kept verbatim forever as the parser's ground truth. | yes |
@@ -232,8 +251,9 @@ lost raw page is only that *future* parser fixes can't be applied to it
 retroactively — a risk consciously accepted and mitigated by the fixture
 tests instead of by hoarding HTML.
 
-Everything else is reproducible: `data/geometry/` is re-fetchable from NTAD
-(committed for offline convenience), `out/` regenerates in seconds.
+Everything else is reproducible: `data/geometry/` and
+`data/amtrak_stations.geojson` are re-fetchable from NTAD (committed for
+offline convenience), `out/` regenerates in seconds.
 
 The datasets stay **plain-text, append-only JSONL** — this is a decision,
 not an accident. Appends are crash-safe and idempotent, the files are
