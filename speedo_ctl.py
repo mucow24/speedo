@@ -14,6 +14,7 @@ Usage:
     python speedo_ctl.py --full-update all            # ...for every route on disk
     python speedo_ctl.py --make-map RouteA RouteB     # build maps for routes
     python speedo_ctl.py --make-map all               # build every route with data
+    python speedo_ctl.py --make-index                 # write out/index.html landing page
 
 The literal token ``all`` stands in for every route discovered under
 data/geometry/, and works anywhere a route list is accepted (--live-update,
@@ -22,22 +23,25 @@ data/geometry/, and works anywhere a route list is accepted (--live-update,
 
 import argparse
 import contextlib
+import html
 import io
 import json
+import re
 from pathlib import Path
 
 import build_map
 import scrape_railrat
 from build_map import (
-    BIN_MILES, MAX_PLAUSIBLE_MPH, MIN_PLAUSIBLE_MPH, OFFROUTE_MILES, ROUTES,
-    SIMPLIFY_MILES, SegmentIndex, build_bins, canonical_route, geojson_parts,
-    simplify, stitch,
+    BIN_MILES, COLOR_ANCHORS, MAX_MPH, MAX_PLAUSIBLE_MPH, MIN_PLAUSIBLE_MPH,
+    OFFROUTE_MILES, ROUTES, SIMPLIFY_MILES, SegmentIndex, build_bins,
+    canonical_route, geojson_parts, simplify, speed_color, stitch,
 )
 
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 GEOMETRY = DATA / "geometry"
 OBS_FILE = DATA / "observations.jsonl"
+OUT = HERE / "out"
 
 
 def discover_routes(geom_dir=GEOMETRY):
@@ -147,6 +151,213 @@ def plan_jobs(routes, wayback):
     return jobs
 
 
+# --- maps landing page ------------------------------------------------------
+# --make-index reads back the CFG blob each generated map already embeds and
+# renders a static out/index.html linking to them. The maps are the source of
+# truth for their own stats; the index recomputes nothing.
+
+_CFG_RE = re.compile(r"const CFG = (.+);")
+
+
+def discover_maps(out_dir=OUT):
+    """Route slug -> Path for each `speed_map_<slug>.html` in out/.
+
+    One entry per route. Anything else in out/ (a prior index.html, strays)
+    is ignored. Ordered by slug, matching the status table.
+    """
+    prefix = "speed_map_"
+    return {p.stem[len(prefix):]: p
+            for p in sorted(out_dir.glob(f"{prefix}*.html"))}
+
+
+def extract_config(html_text):
+    """Pull the CFG JSON blob a generated map embeds (`const CFG = ...;`).
+
+    Each map carries all its own numbers in that one blob, so the index
+    reads it back rather than recomputing anything. Returns the parsed dict,
+    or None if the file has no recognizable CFG line (not one of our maps).
+    """
+    m = _CFG_RE.search(html_text)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def map_summary(cfg):
+    """Headline stats for one map's card, from its embedded CFG.
+
+    Top speed is the fastest bin max -- the maps color by max-per-bin, so the
+    landing page headlines the same number; avg is the mean of the covered
+    bins' maxes; coverage is covered bins / total bins. A map with no covered
+    bins yields top/avg = None (the renderer shows a dash).
+    """
+    bins = cfg.get("bins", [])
+    maxes = [b["mx"] for b in bins if "mx" in b]
+    st = cfg.get("stats", {})
+    return {
+        "display": cfg.get("display") or cfg.get("title", ""),
+        "miles": cfg.get("totalMiles"),
+        "top": max(maxes) if maxes else None,
+        "avg": round(sum(maxes) / len(maxes)) if maxes else None,
+        "covered": len(maxes),
+        "bins": len(bins),
+        "obs": st.get("obs"),
+        "runs": st.get("runs"),
+        "from": st.get("from"),
+        "to": st.get("to"),
+        "built": st.get("built"),
+    }
+
+
+def _hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _gradient_css():
+    """The legend's speed gradient as a CSS linear-gradient, stops placed at
+    each color anchor's fraction of the scale -- identical to the map legend."""
+    stops = ", ".join(f"{_hex(c)} {v / MAX_MPH * 100:.0f}%" for v, c in COLOR_ANCHORS)
+    return f"linear-gradient(to right, {stops})"
+
+
+def _scale_ticks():
+    return "".join(f"<span>{v}</span>" for v, _c in COLOR_ANCHORS)
+
+
+def _num(v, fmt="{}"):
+    """Format a stat, or an em dash when it's missing (e.g. an empty map)."""
+    return fmt.format(v) if v is not None else "&mdash;"
+
+
+def _card_html(s):
+    accent = speed_color(s["top"]) if s["top"] is not None else "#7a7f87"
+    pct = f"{100 * s['covered'] / s['bins']:.0f}%" if s["bins"] else "&mdash;"
+    span = (f"{s['from']} &ndash; {s['to']}"
+            if s.get("from") and s.get("to") else "")
+    meta_bits = []
+    if s.get("obs") is not None:
+        meta_bits.append(f"{s['obs']:,} obs")
+    if s.get("runs") is not None:
+        meta_bits.append(f"{s['runs']} runs")
+    if span:
+        meta_bits.append(span)
+    return f"""      <li class="card" style="--accent:{accent}">
+        <a class="card-link" href="{html.escape(s["leaflet"])}">
+          <div class="card-head">
+            <span class="route">{html.escape(s["display"])}</span>
+            <span class="top" style="color:{accent}">{_num(s["top"])}<span class="unit">mph top</span></span>
+          </div>
+          <div class="stats">
+            <span><b>{_num(s["miles"], "{:.1f}")}</b> mi</span>
+            <span>avg <b>{_num(s["avg"])}</b> mph</span>
+            <span><b>{pct}</b> mapped</span>
+          </div>
+          <div class="meta">{" &middot; ".join(meta_bits)}</div>
+        </a>
+      </li>"""
+
+
+def render_index(summaries):
+    """Render the full out/index.html landing page for the given map summaries.
+
+    Self-contained HTML (no external assets), themed to match the maps: the
+    CARTO-dark background, the #232323 popup cards, the shared speed gradient,
+    and the gold accent from the popups.
+    """
+    if summaries:
+        body = ('    <ul class="maps">\n'
+                + "\n".join(_card_html(s) for s in summaries) + "\n    </ul>")
+    else:
+        body = ('    <div class="empty">No maps built yet.<br>Run '
+                '<code>python speedo_ctl.py --make-map all</code> to build some, '
+                'then re-run <code>--make-index</code>.</div>')
+
+    n = len(summaries)
+    total_mi = sum(s["miles"] for s in summaries
+                   if isinstance(s.get("miles"), (int, float)))
+    total_obs = sum(s["obs"] for s in summaries if isinstance(s.get("obs"), int))
+    built = next((s["built"] for s in summaries if s.get("built")), None)
+    foot = [f"{n} route" + ("" if n == 1 else "s")]
+    if total_mi:
+        foot.append(f"{total_mi:,.0f} route miles")
+    if total_obs:
+        foot.append(f"{total_obs:,} observations")
+    if built:
+        foot.append(f"built {built}")
+
+    # Footer holds only program-generated counts/dates -- no escaping needed.
+    return (PAGE_TMPL
+            .replace("__GRADIENT__", _gradient_css())
+            .replace("__TICKS__", _scale_ticks())
+            .replace("__BODY__", body)
+            .replace("__FOOTER__", " &middot; ".join(foot)))
+
+
+PAGE_TMPL = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>speedo &mdash; Amtrak observed speeds</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: #151515; color: #fff; padding: 0 20px 56px;
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header { padding: 44px 2px 0; }
+  h1 { margin: 0; font-size: 34px; font-weight: 800; letter-spacing: -1px; }
+  .tagline { color: #b9bdc4; margin: 6px 0 20px; }
+  .gradient { height: 8px; border-radius: 5px; background: __GRADIENT__; }
+  .scale { display: flex; justify-content: space-between; color: #7a7f87;
+           font-size: 11px; margin: 4px 1px 0; }
+  .maps { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .card { background: #232323; border: 1px solid #2f2f2f;
+          border-left: 4px solid var(--accent); border-radius: 14px; overflow: hidden;
+          transition: transform .12s ease, border-color .12s ease; }
+  .card:hover { transform: translateY(-2px); border-color: #4a4a4a; }
+  .card-link { display: block; padding: 16px 18px 14px; color: inherit; text-decoration: none; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .route { font-size: 18px; font-weight: 700; }
+  .top { font-size: 30px; font-weight: 800; line-height: 1; letter-spacing: -1px;
+         white-space: nowrap; }
+  .unit { font-size: 11px; font-weight: 700; color: #7a7f87; letter-spacing: 0;
+          margin-left: 4px; text-transform: uppercase; }
+  .stats { display: flex; flex-wrap: wrap; gap: 4px 14px; color: #b9bdc4; font-size: 13px;
+           margin: 13px 0 0; }
+  .stats b { color: #fff; font-weight: 700; }
+  .meta { color: #7a7f87; font-size: 12px; margin-top: 9px; }
+  .empty { background: #232323; border: 1px solid #2f2f2f; border-radius: 14px; padding: 44px;
+           text-align: center; color: #b9bdc4; margin-top: 26px; line-height: 1.9; }
+  .empty code { background: #151515; padding: 2px 6px; border-radius: 4px; color: #fff;
+                font-size: 13px; }
+  footer { color: #7a7f87; font-size: 12px; margin-top: 34px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>speedo</h1>
+    <p class="tagline">How fast Amtrak trains actually go, mile by mile &mdash;
+      from observed position reports.</p>
+    <div class="gradient"></div>
+    <div class="scale">__TICKS__</div>
+  </header>
+  <main>
+__BODY__
+  </main>
+  <footer>__FOOTER__</footer>
+</div>
+</body>
+</html>
+"""
+
+
 # --- commands (thin orchestration over the pieces above) --------------------
 
 def cmd_status():
@@ -215,6 +426,26 @@ def cmd_make_maps(routes):
         build_map.build(route)
 
 
+def cmd_make_index(out_dir=OUT):
+    maps = discover_maps(out_dir)
+    summaries = []
+    for slug, path in maps.items():
+        cfg = extract_config(path.read_text(encoding="utf-8"))
+        if cfg is None:
+            print(f"  skip {path.name}: no CFG blob (not a speedo map?)")
+            continue
+        s = map_summary(cfg)
+        s["slug"] = slug
+        s["leaflet"] = path.name
+        summaries.append(s)
+    out_dir.mkdir(exist_ok=True)
+    out_path = out_dir / "index.html"
+    out_path.write_text(render_index(summaries), encoding="utf-8")
+    plural = "" if len(summaries) == 1 else "s"
+    print(f"Wrote {out_path} ({len(summaries)} map{plural}, "
+          f"{out_path.stat().st_size / 1024:.0f} KB)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = ap.add_mutually_exclusive_group()
@@ -227,6 +458,9 @@ def main():
     g.add_argument("--make-map", nargs="+", metavar="ROUTE",
                    help="build the speed map(s) for the given routes "
                         "('all' = every route under data/geometry/)")
+    g.add_argument("--make-index", action="store_true",
+                   help="write out/index.html: a landing page linking the maps "
+                        "currently in out/")
     args = ap.parse_args()
 
     if args.full_update:
@@ -235,6 +469,8 @@ def main():
         cmd_update(normalize_routes(args.live_update), wayback=False)
     elif args.make_map:
         cmd_make_maps(normalize_routes(args.make_map))
+    elif args.make_index:
+        cmd_make_index()
     else:
         cmd_status()
 

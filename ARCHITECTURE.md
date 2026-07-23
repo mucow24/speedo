@@ -39,8 +39,8 @@ it):
    official route line and render interactive speed maps.
 
 `speedo_ctl.py` sits above both stages as an optional manager (dataset
-status, queued multi-route updates, batch map builds); it owns no data and
-no parsing of its own.
+status, queued multi-route updates, batch map builds, a maps landing page);
+it owns no data and does none of the scraping or map-building itself.
 
 RailRat only serves each train's *latest* run, so history accumulates across
 repeated scrapes. That is why the dataset — not any single scrape — is the
@@ -161,9 +161,11 @@ Pipeline per run, for one route:
 
 ## speedo_ctl.py
 
-A thin manager over the two pipeline stages; it owns no data and does no
-parsing. Route discovery is a `data/geometry/` folder scan — a route exists
-for speedo_ctl iff its cached NTAD geometry file does.
+A thin manager over the two pipeline stages; it scrapes nothing and builds
+no maps itself, reading the datasets, the geometry cache, and (for the
+landing page) the maps `build_map` already wrote. Route discovery is a
+`data/geometry/` folder scan — a route exists for speedo_ctl iff its cached
+NTAD geometry file does.
 
 - **Status** (no args) — one table row per discovered route, labeled by
   RailRat slug (not display name) so rows copy-paste straight into the
@@ -186,6 +188,14 @@ for speedo_ctl iff its cached NTAD geometry file does.
 - **Maps** (`--make-map`) — `build_map.build` per route, skipping routes
   with no usable observations or no `ROUTES` entry (`--make-map all` builds
   the whole cache).
+- **Index** (`--make-index`) — write `out/index.html`, a static landing page
+  linking every Leaflet map in `out/`, themed to match them (the CARTO-dark
+  background, the `#232323` popup cards, the shared speed gradient). It reads
+  back the `CFG` JSON blob each generated map embeds — the maps are the
+  source of truth for their own stats, so the index recomputes nothing — and
+  renders one card per route (length, top speed, average, coverage), tinting
+  each top-speed number with `build_map.speed_color` so page and maps share
+  one palette. A route appears iff its `speed_map_<route>.html` is on disk.
 
 CLI route arguments are canonicalized through `canonical_route` and
 deduped, keeping the "canonicalize at every entry point" invariant. The
@@ -203,7 +213,7 @@ reject it as an unknown route.
 | `data/roster_<route>.json` | Known train numbers per route (sorted list). | yes |
 | `data/geometry/<route>.geojson` | Cached NTAD route geometry. Delete to re-fetch. | yes |
 | `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches. A disposable debug/reprocessing cache — delete freely. | no |
-| `out/` | Generated maps. | no |
+| `out/` | Generated maps and the `--make-index` landing page (`index.html`). | no |
 | `tests/fixtures/*.html` | A curated handful of raw pages, kept verbatim forever as the parser's ground truth. | yes |
 
 ### Storage & backup policy
