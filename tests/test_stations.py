@@ -133,8 +133,10 @@ def test_refresh_route_stations_writes_and_is_idempotent(tmp_path, monkeypatch):
 
 def test_build_emits_station_dots(tmp_path, monkeypatch):
     # Purpose: end-to-end, a station Point in the geometry file surfaces in the
-    # rendered map's CFG as a [lat, lon, name] dot the front-end can draw --
-    # the payload behind the on-map station markers.
+    # rendered map's CFG as a [lat, lon, name, mile] dot the front-end can draw
+    # -- the payload behind the on-map station markers. The 4th field (route
+    # mile on the longest branch) is pinned separately in test_profile_data.py;
+    # here only the [lat, lon, name] prefix the dots consume is asserted.
     monkeypatch.setattr(bm, "DATA", tmp_path)
     monkeypatch.setattr(bm, "OUT", tmp_path / "out")
     (tmp_path / "geometry").mkdir()
@@ -149,7 +151,8 @@ def test_build_emits_station_dots(tmp_path, monkeypatch):
     bm.build("AcelaExpress")
     html = (tmp_path / "out" / "speed_map_AcelaExpress.html").read_text(encoding="utf-8")
     blob = html.split("const CFG = ", 1)[1].split(";\ndocument.title", 1)[0]
-    assert json.loads(blob)["stations"] == [[42.05, -71.0, "Boston, MA"]]
+    (la, lo, nm, _mile), = json.loads(blob)["stations"]
+    assert [la, lo, nm] == [42.05, -71.0, "Boston, MA"]
 
 
 def test_load_station_index_parses_ntad_cache(tmp_path, monkeypatch):
@@ -175,4 +178,4 @@ def test_template_renders_station_layer_with_hover():
     # toggleable overlay -- the visible half of the feature.
     assert "CFG.stations" in bm.LEAFLET_TMPL
     assert "'Stations'" in bm.LEAFLET_TMPL
-    assert re.search(r"stationItems[\s\S]*bindTooltip", bm.LEAFLET_TMPL)
+    assert re.search(r"stationMarks[\s\S]*bindTooltip", bm.LEAFLET_TMPL)
