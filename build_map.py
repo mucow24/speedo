@@ -6,14 +6,12 @@ every GPS observation onto it, slices the line into half-mile bins, and colors
 each bin by the MAX speed ever observed there (so station dwell and delay
 slowdowns don't mask what the track can do). Routes with branches (the
 Regional's Virginia legs, the Empire Builder's Portland leg) are drawn as
-several sections with mile markers running continuously across them. Output is self-contained HTML:
-a Leaflet/OpenStreetMap version that works with zero setup, and a Google Maps
-version that activates when you supply an API key.
+several sections with mile markers running continuously across them. Output is
+a self-contained Leaflet/OpenStreetMap HTML map that works with zero setup.
 
 Usage:
-    python build_map.py                          # Acela, both engines
-    python build_map.py --google-key AIza...     # bake your key into the Google version
-    python build_map.py --route NortheastRegional --engine leaflet
+    python build_map.py                          # Acela
+    python build_map.py --route NortheastRegional
 """
 
 import argparse
@@ -524,7 +522,7 @@ def short_ts(ts):
     return f"{ts[5:7]}/{ts[8:10]} {ts[11:16]}"
 
 
-def build(route, engines, google_key, min_mph=MIN_PLAUSIBLE_MPH):
+def build(route, min_mph=MIN_PLAUSIBLE_MPH):
     route = canonical_route(route)  # every entry point resolves to the one canonical slug
     parts, cfg = fetch_route_geometry(route)
     sections = stitch(parts, cfg.get("mile0"))
@@ -596,22 +594,9 @@ def build(route, engines, google_key, min_mph=MIN_PLAUSIBLE_MPH):
     blob = json.dumps(config, separators=(",", ":"))
 
     OUT.mkdir(exist_ok=True)
-    written = []
-    if "leaflet" in engines:
-        path = OUT / f"speed_map_{route}.html"
-        path.write_text(LEAFLET_TMPL.replace("__CONFIG__", blob), encoding="utf-8")
-        written.append(path)
-    if "google" in engines:
-        key = google_key or "YOUR_GOOGLE_MAPS_API_KEY"
-        html = GOOGLE_TMPL.replace("__CONFIG__", blob).replace("__KEY__", key)
-        path = OUT / f"speed_map_{route}_google.html"
-        path.write_text(html, encoding="utf-8")
-        written.append(path)
-        if not google_key:
-            print("  note: no --google-key given; edit YOUR_GOOGLE_MAPS_API_KEY "
-                  "in the google file to activate it")
-    for p in written:
-        print(f"Wrote {p} ({p.stat().st_size / 1024:.0f} KB)")
+    path = OUT / f"speed_map_{route}.html"
+    path.write_text(LEAFLET_TMPL.replace("__CONFIG__", blob), encoding="utf-8")
+    print(f"Wrote {path} ({path.stat().st_size / 1024:.0f} KB)")
 
 
 # --- shared front-end pieces ------------------------------------------------
@@ -637,11 +622,10 @@ function speedColor(v){
 const S = {hideOut: true, interp: true, maxGap: 10, lo: 0, hi: CFG.maxMph};
 
 // The wash: out-of-range segments pre-blend their speed color 85% toward the
-// basemap tone (WASH_BG, declared per template: dark CARTO tiles on Leaflet,
-// Google's light default) at full line opacity. Washing via low alpha instead
-// would additively brighten wherever washed lines overlap at high zoom (bin
-// joints, parallel track); opaque pre-blended color composites identically
-// everywhere.
+// basemap tone (WASH_BG, the dark CARTO tile tone declared in the template) at
+// full line opacity. Washing via low alpha instead would additively brighten
+// wherever washed lines overlap at high zoom (bin joints, parallel track);
+// opaque pre-blended color composites identically everywhere.
 const WASH_MIX = 0.85;
 function parseColor(c){
   if (c[0] === '#')
@@ -856,13 +840,6 @@ COMMON_CSS = r"""
   .leaflet-popup-tip { background: #232323; box-shadow: none; }
   .leaflet-container a.leaflet-popup-close-button { color: #9aa0a6; top: 6px; right: 8px; }
   .leaflet-container a.leaflet-popup-close-button:hover { color: #fff; }
-
-  /* Google InfoWindow chrome -> dark card (best-effort; classes are Google's) */
-  .gm-style .gm-style-iw-c { background: #232323; border: 3px solid #fff; border-radius: 22px;
-      box-shadow: 0 3px 16px rgba(0,0,0,.45); padding: 0; }
-  .gm-style .gm-style-iw-d { overflow: hidden !important; padding: 14px 22px; }
-  .gm-style .gm-style-iw-t::after { background: #232323; box-shadow: none; }
-  .gm-style .gm-style-iw-c button.gm-ui-hover-effect > span { background: #9aa0a6; }
 """
 
 LEAFLET_TMPL = r"""<!DOCTYPE html>
@@ -935,110 +912,16 @@ legend.addTo(map);
 </html>
 """
 
-GOOGLE_TMPL = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>speedo</title>
-<style>
-""" + COMMON_CSS + r"""
-  .legend { margin: 0 0 24px 10px; }
-</style>
-</head>
-<body>
-<div id="map"></div>
-<script>
-const CFG = __CONFIG__;
-document.title = CFG.title;
-const WASH_BG = '#e8e6e0';  // wash blend target: Google's light default basemap
-""" + COMMON_JS + r"""
-function initMap(){
-  const map = new google.maps.Map(document.getElementById('map'),
-    {mapTypeControl: true, streetViewControl: false});
-  const bounds = new google.maps.LatLngBounds();
-  const info = new google.maps.InfoWindow();
-
-  // Google polylines have no dashArray; dashed styles are drawn as repeated
-  // line symbols over an invisible stroke.
-  function toGoogle(s){
-    if (!s.dash)
-      return {strokeColor: s.color, strokeWeight: s.weight,
-              strokeOpacity: s.opacity, icons: null};
-    return {strokeColor: s.color, strokeWeight: s.weight, strokeOpacity: 0,
-            icons: [{icon: {path: 'M 0,-1 0,1', strokeOpacity: s.opacity,
-                            strokeColor: s.color, strokeWeight: s.weight, scale: 2},
-                     offset: '0', repeat: '12px'}]};
-  }
-  const binLines = [];
-  for (const b of CFG.bins){
-    const path = b.pts.map(([lat, lng]) => ({lat, lng}));
-    const line = new google.maps.Polyline({path, map, ...toGoogle(binStyle(b))});
-    line.addListener('click', e => {
-      info.setContent(binHtml(b)); info.setPosition(e.latLng); info.open(map);
-    });
-    line.addListener('mouseover', () => line.setOptions(toGoogle({...binStyle(b), weight: 9})));
-    line.addListener('mouseout',  () => line.setOptions(toGoogle(binStyle(b))));
-    binLines.push([line, b]);
-    path.forEach(p => bounds.extend(p));
-  }
-  map.fitBounds(bounds);
-
-  const dotItems = CFG.obsPts.map(([la, lo, mph, train, ts]) => {
-    const dotIcon = washed => ({path: google.maps.SymbolPath.CIRCLE, scale: 3.5,
-        fillColor: washed ? washColor(speedColor(mph)) : speedColor(mph), fillOpacity: .9,
-        strokeColor: washed ? washColor('#ffffff') : '#fff', strokeWeight: 1});
-    const m = new google.maps.Marker({
-      position: {lat: la, lng: lo},
-      icon: dotIcon(false),
-      title: `${mph} mph - train ${train}, ${ts}`,
-    });
-    m.addListener('click', e => {
-      info.setContent(`<b>${mph} mph</b> - train ${train}, ${ts}`);
-      info.setPosition(e.latLng); info.open(map);
-    });
-    return [m, mph, dotIcon];
-  });
-  const dots = dotItems.map(([m]) => m);
-
-  const restyle = () => {
-    binLines.forEach(([line, b]) => line.setOptions(toGoogle(binStyle(b))));
-    dotItems.forEach(([m, mph, dotIcon]) =>
-      m.setIcon(dotIcon(rangeActive() && !inSpeedRange(mph))));
-  };
-
-  const wrap = document.createElement('div');
-  wrap.className = 'legend';
-  wrap.innerHTML = legendHtml() + controlsHtml() +
-    `<label class="lg-sub" style="display:block;margin-top:4px">
-       <input type="checkbox" id="dots-cb"> show raw observations</label>`;
-  map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(wrap);
-  wireControls(wrap, restyle);
-  wrap.querySelector('#dots-cb').addEventListener('change', ev =>
-    dots.forEach(m => m.setMap(ev.target.checked ? map : null)));
-}
-</script>
-<script async defer
-  src="https://maps.googleapis.com/maps/api/js?key=__KEY__&callback=initMap"></script>
-</body>
-</html>
-"""
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--route", default="AcelaExpress",
                     help="RailRat route slug (default AcelaExpress)")
-    ap.add_argument("--engine", default="both", choices=["both", "leaflet", "google"])
-    ap.add_argument("--google-key", default="",
-                    help="Google Maps JS API key to bake into the google output")
     ap.add_argument("--min-mph", type=int, default=MIN_PLAUSIBLE_MPH,
                     help="ignore observations slower than this -- stopped or "
                          "stuck trains, not track speed limits "
                          f"(default {MIN_PLAUSIBLE_MPH})")
     args = ap.parse_args()
-    engines = ["leaflet", "google"] if args.engine == "both" else [args.engine]
-    build(args.route, engines, args.google_key, args.min_mph)
+    build(args.route, args.min_mph)
 
 
 if __name__ == "__main__":

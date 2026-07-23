@@ -160,23 +160,14 @@ _CFG_RE = re.compile(r"const CFG = (.+);")
 
 
 def discover_maps(out_dir=OUT):
-    """Route slug -> {'leaflet': Path, 'google': Path|None} for maps in out/.
+    """Route slug -> Path for each `speed_map_<slug>.html` in out/.
 
-    One entry per route, keyed to the Leaflet map (it needs no API key). A
-    ``speed_map_<slug>_google.html`` is that slug's companion engine, not a
-    separate route; anything else in out/ (a prior index.html, strays) is
-    ignored. Ordered by slug, matching the status table.
+    One entry per route. Anything else in out/ (a prior index.html, strays)
+    is ignored. Ordered by slug, matching the status table.
     """
     prefix = "speed_map_"
-    leaflet, google = {}, {}
-    for p in sorted(out_dir.glob(f"{prefix}*.html")):
-        stem = p.stem[len(prefix):]
-        if stem.endswith("_google"):
-            google[stem[:-len("_google")]] = p
-        else:
-            leaflet[stem] = p
-    return {slug: {"leaflet": path, "google": google.get(slug)}
-            for slug, path in leaflet.items()}
+    return {p.stem[len(prefix):]: p
+            for p in sorted(out_dir.glob(f"{prefix}*.html"))}
 
 
 def extract_config(html_text):
@@ -253,8 +244,6 @@ def _card_html(s):
         meta_bits.append(f"{s['runs']} runs")
     if span:
         meta_bits.append(span)
-    google = (f'\n        <a class="alt" href="{html.escape(s["google"])}">'
-              f'Google Maps version &nearr;</a>' if s.get("google") else "")
     return f"""      <li class="card" style="--accent:{accent}">
         <a class="card-link" href="{html.escape(s["leaflet"])}">
           <div class="card-head">
@@ -267,7 +256,7 @@ def _card_html(s):
             <span><b>{pct}</b> mapped</span>
           </div>
           <div class="meta">{" &middot; ".join(meta_bits)}</div>
-        </a>{google}
+        </a>
       </li>"""
 
 
@@ -343,9 +332,6 @@ PAGE_TMPL = r"""<!DOCTYPE html>
            margin: 13px 0 0; }
   .stats b { color: #fff; font-weight: 700; }
   .meta { color: #7a7f87; font-size: 12px; margin-top: 9px; }
-  .alt { display: inline-block; padding: 0 18px 14px; font-size: 12px; color: #e8b93c;
-         text-decoration: none; }
-  .alt:hover { text-decoration: underline; }
   .empty { background: #232323; border: 1px solid #2f2f2f; border-radius: 14px; padding: 44px;
            text-align: center; color: #b9bdc4; margin-top: 26px; line-height: 1.9; }
   .empty code { background: #151515; padding: 2px 6px; border-radius: 4px; color: #fff;
@@ -427,8 +413,7 @@ def cmd_update(routes, wayback):
                 skip_wayback = True
 
 
-def cmd_make_maps(routes, engine, google_key):
-    engines = ["leaflet", "google"] if engine == "both" else [engine]
+def cmd_make_maps(routes):
     stats = collect_route_stats(OBS_FILE, routes)
     for route in routes:
         print(f"\n=== map: {route} ===")
@@ -438,21 +423,20 @@ def cmd_make_maps(routes, engine, google_key):
         if not stats[route]["plausible"]:
             print("  no usable observations; skipping (run an update first)")
             continue
-        build_map.build(route, engines, google_key)
+        build_map.build(route)
 
 
 def cmd_make_index(out_dir=OUT):
     maps = discover_maps(out_dir)
     summaries = []
-    for slug, files in maps.items():
-        cfg = extract_config(files["leaflet"].read_text(encoding="utf-8"))
+    for slug, path in maps.items():
+        cfg = extract_config(path.read_text(encoding="utf-8"))
         if cfg is None:
-            print(f"  skip {files['leaflet'].name}: no CFG blob (not a speedo map?)")
+            print(f"  skip {path.name}: no CFG blob (not a speedo map?)")
             continue
         s = map_summary(cfg)
         s["slug"] = slug
-        s["leaflet"] = files["leaflet"].name
-        s["google"] = files["google"].name if files["google"] else None
+        s["leaflet"] = path.name
         summaries.append(s)
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "index.html"
@@ -477,10 +461,6 @@ def main():
     g.add_argument("--make-index", action="store_true",
                    help="write out/index.html: a landing page linking the maps "
                         "currently in out/")
-    ap.add_argument("--engine", default="both", choices=["both", "leaflet", "google"],
-                    help="map engine(s) for --make-map")
-    ap.add_argument("--google-key", default="",
-                    help="Google Maps JS API key to bake into google map builds")
     args = ap.parse_args()
 
     if args.full_update:
@@ -488,7 +468,7 @@ def main():
     elif args.live_update:
         cmd_update(normalize_routes(args.live_update), wayback=False)
     elif args.make_map:
-        cmd_make_maps(normalize_routes(args.make_map), args.engine, args.google_key)
+        cmd_make_maps(normalize_routes(args.make_map))
     elif args.make_index:
         cmd_make_index()
     else:

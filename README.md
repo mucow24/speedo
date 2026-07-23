@@ -30,7 +30,6 @@ python build_map.py
 
 # 3. Open the result
 out/speed_map_AcelaExpress.html          # Leaflet/OSM - works as-is
-out/speed_map_AcelaExpress_google.html   # needs a Google Maps API key
 ```
 
 The order matters: `build_map.py` renders whatever `scrape_railrat.py` has
@@ -48,8 +47,6 @@ python scrape_railrat.py --wayback                   # harvest archive.org snaps
 python scrape_railrat.py --reparse                   # rebuild dataset from data/raw, no network
 
 python build_map.py --route NortheastRegional        # must match a scraped route
-python build_map.py --engine leaflet                 # or: google, both (default)
-python build_map.py --google-key AIza...             # bake your key into the google file
 ```
 
 Or drive everything through the manager, which handles several routes at
@@ -59,7 +56,7 @@ once and knows the state of the dataset:
 python speedo_ctl.py                                 # per-route status table
 python speedo_ctl.py --live-update Keystone Vermonter  # queued live scrapes
 python speedo_ctl.py --full-update AcelaExpress      # live + wayback backfill
-python speedo_ctl.py --make-map Vermonter            # build one route's maps
+python speedo_ctl.py --make-map Vermonter            # build one route's map
 python speedo_ctl.py --make-map all                  # build every route with data
 ```
 
@@ -73,11 +70,6 @@ Notes:
 - For a route other than Acela, `build_map.py` needs to know the matching
   NTAD geometry name — see the `ROUTES` dict at the top and add an entry if
   your route isn't listed.
-- The Google map needs a Maps JavaScript API key (billing-enabled Google Cloud
-  account; hobby use fits the free tier). Pass `--google-key`, or edit
-  `YOUR_GOOGLE_MAPS_API_KEY` in the output file. Don't publish that file
-  unless the key is referrer-restricted — that's also why `out/` is
-  gitignored.
 
 ## How it works
 

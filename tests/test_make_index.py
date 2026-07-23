@@ -12,12 +12,11 @@ import build_map as bm
 import speedo_ctl as ctl
 
 
-def write_map(out_dir, slug, cfg, google=False):
+def write_map(out_dir, slug, cfg):
     """Write a stand-in generated map embedding CFG exactly the way the
-    build_map templates do -- a single `const CFG = <json>;` line -- so the
+    build_map template does -- a single `const CFG = <json>;` line -- so the
     extractor is tested against the real on-disk shape."""
-    name = f"speed_map_{slug}{'_google' if google else ''}.html"
-    p = out_dir / name
+    p = out_dir / f"speed_map_{slug}.html"
     p.write_text(
         "<!DOCTYPE html>\n<script>\nconst CFG = %s;\ndocument.title = CFG.title;\n</script>"
         % json.dumps(cfg, separators=(",", ":")),
@@ -25,20 +24,17 @@ def write_map(out_dir, slug, cfg, google=False):
     return p
 
 
-def test_discover_maps_pairs_leaflet_with_google(tmp_path):
-    # Purpose: the index lists one card per route -- the Leaflet map, which
-    # needs no API key. A `speed_map_<slug>_google.html` is that route's
-    # companion engine, not a separate route, and unrelated files in out/
-    # (a prior index.html, strays) are ignored.
-    write_map(tmp_path, "AcelaExpress", {"display": "Acela Express"})
-    write_map(tmp_path, "AcelaExpress", {"display": "Acela Express"}, google=True)
+def test_discover_maps_lists_one_per_route_ignoring_strays(tmp_path):
+    # Purpose: the index lists one card per generated map, keyed by route
+    # slug and ordered by it (matching the status table); a prior index.html
+    # and other non-map files in out/ are ignored.
     write_map(tmp_path, "KeystoneService", {"display": "Keystone Service"})
+    write_map(tmp_path, "AcelaExpress", {"display": "Acela Express"})
     (tmp_path / "index.html").write_text("stale", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("ignore", encoding="utf-8")
     maps = ctl.discover_maps(tmp_path)
     assert list(maps) == ["AcelaExpress", "KeystoneService"]
-    assert maps["AcelaExpress"]["google"].name == "speed_map_AcelaExpress_google.html"
-    assert maps["KeystoneService"]["google"] is None
+    assert maps["AcelaExpress"].name == "speed_map_AcelaExpress.html"
 
 
 def test_extract_config_reads_embedded_blob(tmp_path):
@@ -101,7 +97,6 @@ def test_map_summary_handles_a_map_with_no_covered_bins():
 
 def _summary(**over):
     base = {"slug": "AcelaExpress", "leaflet": "speed_map_AcelaExpress.html",
-            "google": "speed_map_AcelaExpress_google.html",
             "display": "Acela Express", "miles": 456.7, "top": 150, "avg": 92,
             "covered": 700, "bins": 900, "obs": 41203, "runs": 38,
             "from": "2025-05-01", "to": "2026-07-21", "built": "2026-07-23"}
@@ -112,19 +107,16 @@ def _summary(**over):
 def test_render_index_lists_maps_with_links_and_stats():
     # Purpose: the page is the whole deliverable -- pin that each map becomes
     # a card linking to its Leaflet file, showing its display name, length
-    # and top speed, and that the Google companion is linked only when the
-    # map actually has one.
+    # and top speed.
     html = ctl.render_index([
         _summary(),
         _summary(slug="KeystoneService", leaflet="speed_map_KeystoneService.html",
-                 google=None, display="Keystone Service", miles=104.2, top=110),
+                 display="Keystone Service", miles=104.2, top=110),
     ])
     assert html.lstrip().startswith("<!DOCTYPE html>")
     assert 'href="speed_map_AcelaExpress.html"' in html
     assert "Acela Express" in html and "456.7" in html and "150" in html
-    # Google companion is linked for Acela (it has one) but not Keystone.
-    assert 'href="speed_map_AcelaExpress_google.html"' in html
-    assert "speed_map_KeystoneService_google.html" not in html
+    assert 'href="speed_map_KeystoneService.html"' in html
 
 
 def test_render_index_colors_top_speed_like_the_map():

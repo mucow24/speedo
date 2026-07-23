@@ -1,7 +1,7 @@
 # raw page snapshots: disposable debug/reparse cache -- everything of value
 # is extracted into the committed JSONL datasets at ingest
 data/raw/
-# generated maps; the google one may contain your Maps API key
+# generated maps (reproducible from the datasets in seconds)
 out/
 __pycache__/
 *.egg-info/

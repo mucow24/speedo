@@ -23,7 +23,7 @@ def js_ctx():
     }
     ctx = MiniRacer()
     ctx.eval("const CFG = " + json.dumps(cfg) + ";")
-    ctx.eval("const WASH_BG = '#151515';")  # templates define this; Leaflet's dark tone here
+    ctx.eval("const WASH_BG = '#151515';")  # the template defines this; the CARTO dark tone
     ctx.eval(bm.COMMON_JS)
     return ctx
 
@@ -128,19 +128,18 @@ def test_drag_rounds_to_whole_mph():
     assert json.loads(ctx.eval("JSON.stringify(dragRange('lo', 63.4, 0, 160, 160))")) == [63, 160]
 
 
-def test_each_engine_defines_its_own_wash_background():
-    # Purpose: the wash blends toward whatever basemap sits behind the lines
-    # -- dark CARTO tiles on Leaflet, Google's light default -- so each
-    # template must declare its own WASH_BG. Sharing one tone would make the
-    # "dimmed" track glow against one of the two basemaps.
+def test_leaflet_declares_dark_wash_background():
+    # Purpose: the wash blends toward the basemap tone behind the lines. The
+    # sole engine's basemap is CARTO Dark Matter, so the template must declare
+    # the matching dark WASH_BG (#151515) -- a light tone would make "dimmed"
+    # out-of-range track glow against the dark tiles instead of receding.
     assert "const WASH_BG = '#151515'" in bm.LEAFLET_TMPL
-    assert "const WASH_BG = '#e8e6e0'" in bm.GOOGLE_TMPL
 
 
 def test_legend_markup_carries_range_controls():
     # Purpose: pin the contract between legendHtml() and the range wiring --
     # the drag code looks these ids up, so dropping one silently kills the
-    # feature in both map engines.
+    # speed-range highlight feature.
     ctx = js_ctx()
     html = ctx.eval("legendHtml()")
     for el_id in ("h-lo", "h-hi", "rng-wrap", "rng-label", "rng-reset"):
