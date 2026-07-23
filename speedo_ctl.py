@@ -202,8 +202,7 @@ def cmd_update(routes, wayback):
                 skip_wayback = True
 
 
-def cmd_make_maps(routes, engine, google_key):
-    engines = ["leaflet", "google"] if engine == "both" else [engine]
+def cmd_make_maps(routes):
     stats = collect_route_stats(OBS_FILE, routes)
     for route in routes:
         print(f"\n=== map: {route} ===")
@@ -213,7 +212,7 @@ def cmd_make_maps(routes, engine, google_key):
         if not stats[route]["plausible"]:
             print("  no usable observations; skipping (run an update first)")
             continue
-        build_map.build(route, engines, google_key)
+        build_map.build(route)
 
 
 def main():
@@ -228,10 +227,6 @@ def main():
     g.add_argument("--make-map", nargs="+", metavar="ROUTE",
                    help="build the speed map(s) for the given routes "
                         "('all' = every route under data/geometry/)")
-    ap.add_argument("--engine", default="both", choices=["both", "leaflet", "google"],
-                    help="map engine(s) for --make-map")
-    ap.add_argument("--google-key", default="",
-                    help="Google Maps JS API key to bake into google map builds")
     args = ap.parse_args()
 
     if args.full_update:
@@ -239,7 +234,7 @@ def main():
     elif args.live_update:
         cmd_update(normalize_routes(args.live_update), wayback=False)
     elif args.make_map:
-        cmd_make_maps(normalize_routes(args.make_map), args.engine, args.google_key)
+        cmd_make_maps(normalize_routes(args.make_map))
     else:
         cmd_status()
 

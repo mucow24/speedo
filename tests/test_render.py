@@ -16,16 +16,25 @@ import build_map as bm
 
 
 def test_inline_scripts_parse_as_valid_js():
-    # Purpose: both engines' front-end lives in inline <script> blocks that no
+    # Purpose: the front-end lives in inline <script> blocks that no
     # Python-side test executes -- a template typo ships a blank map. Compile
     # (not run) every block under V8 to pin parse-validity of the shipped JS.
     ctx = MiniRacer()
-    for tmpl in (bm.LEAFLET_TMPL, bm.GOOGLE_TMPL):
-        html = tmpl.replace("__CONFIG__", "{}").replace("__KEY__", "k")
-        blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
-        assert blocks, "template lost its inline scripts"
-        for script in blocks:
-            ctx.eval("new Function(" + json.dumps(script) + ")")
+    html = bm.LEAFLET_TMPL.replace("__CONFIG__", "{}")
+    blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+    assert blocks, "template lost its inline scripts"
+    for script in blocks:
+        ctx.eval("new Function(" + json.dumps(script) + ")")
+
+
+def test_google_maps_engine_removed():
+    # Purpose: the Google Maps output was removed on purpose (it needed a
+    # billed API key and was never used). Pin the removal the same way the
+    # OSM-tiles swap is pinned below: the module exposes no Google template,
+    # and the sole shipped map loads no Google Maps JS -- so a stray revert
+    # re-adding the keyed, can't-ship-as-is engine turns a test red.
+    assert not hasattr(bm, "GOOGLE_TMPL")
+    assert "maps.googleapis.com" not in bm.LEAFLET_TMPL
 
 
 def test_leaflet_uses_carto_dark_matter_with_labels():

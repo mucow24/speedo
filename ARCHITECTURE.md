@@ -142,25 +142,22 @@ Pipeline per run, for one route:
   outliers-hidden where different). Neither crosses a section boundary. The
   raw stats always ship too; the toggles are pure display.
 - **Render** — everything is serialized into one JSON `CFG` blob and
-  substituted into two inline HTML templates: Leaflet
-  (`speed_map_<route>.html`, works as-is) and Google Maps
-  (`speed_map_<route>_google.html`, needs an API key). The Leaflet map draws
-  on CARTO Dark Matter tiles (dark basemap over OSM data, no API key) to match
-  the dark UI chrome; the Google map keeps Google's default styling. Bins with
-  no data
-  draw gray dashed; interpolated bins draw color-dashed and their popups say
-  "interpolated". The legend hosts the toggles: hide outliers (default on),
-  interpolate gaps (default on), and a max-gap slider (1–100 bins, active
-  only while interpolating). The legend's gradient bar doubles as a
-  **speed-range highlighter**: two draggable handles select an inclusive
-  [lo, hi] mph band (default full scale = inactive); segments, interpolated
-  bins, no-data bins, and raw-observation dots outside the band wash out,
-  restyled live during the drag. The wash pre-blends each color 85%
-  (`WASH_MIX`) toward the basemap tone (`WASH_BG`, declared per template —
-  dark for CARTO, light for Google) at full opacity, rather than dropping
-  alpha: translucent lines additively brighten where they overlap at high
-  zoom. All of this is display-time state in the shared front-end JS
-  (`COMMON_JS`) — nothing about the filter is baked into the build.
+  substituted into the inline HTML template (`LEAFLET_TMPL` →
+  `speed_map_<route>.html`, works as-is, no API key). The map draws on CARTO
+  Dark Matter tiles (dark basemap over OSM data, no API key) to match the dark
+  UI chrome. Bins with no data draw gray dashed; interpolated bins draw
+  color-dashed and their popups say "interpolated". The legend hosts the
+  toggles: hide outliers (default on), interpolate gaps (default on), and a
+  max-gap slider (1–100 bins, active only while interpolating). The legend's
+  gradient bar doubles as a **speed-range highlighter**: two draggable handles
+  select an inclusive [lo, hi] mph band (default full scale = inactive);
+  segments, interpolated bins, no-data bins, and raw-observation dots outside
+  the band wash out, restyled live during the drag. The wash pre-blends each
+  color 85% (`WASH_MIX`) toward the basemap tone (`WASH_BG`, the dark CARTO
+  tone declared in the template) at full opacity, rather than dropping alpha:
+  translucent lines additively brighten where they overlap at high zoom. All
+  of this is display-time state in the front-end JS (`COMMON_JS`) — nothing
+  about the filter is baked into the build.
 
 ## speedo_ctl.py
 
@@ -206,7 +203,7 @@ reject it as an unknown route.
 | `data/roster_<route>.json` | Known train numbers per route (sorted list). | yes |
 | `data/geometry/<route>.geojson` | Cached NTAD route geometry. Delete to re-fetch. | yes |
 | `data/raw/<date>/`, `data/raw/wayback/` | Raw scraped HTML + CDX caches. A disposable debug/reprocessing cache — delete freely. | no |
-| `out/` | Generated maps. | no (the Google one may embed an API key) |
+| `out/` | Generated maps. | no |
 | `tests/fixtures/*.html` | A curated handful of raw pages, kept verbatim forever as the parser's ground truth. | yes |
 
 ### Storage & backup policy
@@ -259,7 +256,7 @@ change and belongs in this file:
 - **Politeness is non-negotiable**: throttles, backoff, honest User-Agent.
   RailRat and archive.org are free rides.
 - **Output is self-contained HTML** — no build step, no server, no assets
-  beyond CDN Leaflet/Google Maps JS.
+  beyond CDN Leaflet JS.
 - **Route identity is the RailRat slug**, canonicalized through
   `ROUTE_ALIASES` at every entry point (CLI args and parsed pages).
 
